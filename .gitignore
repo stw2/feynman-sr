@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+equations/
+run.log
+results.tsv
+.env
+.specstory/
+.DS_Store
