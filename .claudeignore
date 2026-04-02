@@ -1,2 +1,3 @@
 # Ground-truth formulas — agents must not see these
 prepare.py
+.env
