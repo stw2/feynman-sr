@@ -37,15 +37,15 @@ from evaluate import EQUATIONS, load_equation_data, r_squared, is_exact
 # ============================================================================
 # HYPERPARAMETERS — agents should tune these
 # ============================================================================
-POPULATION_SIZE = 300
-GENERATIONS = 50
+POPULATION_SIZE = 500
+GENERATIONS = 80
 TOURNAMENT_SIZE = 5
 MAX_DEPTH = 6
 CROSSOVER_PROB = 0.7
 MUTATION_PROB = 0.2
 REPRODUCTION_PROB = 0.1
 PARSIMONY_COEFF = 0.001  # penalize large trees
-ELITISM = 5  # top-N individuals survive unchanged
+ELITISM = 10  # top-N individuals survive unchanged
 TIME_BUDGET_PER_EQ = 60  # seconds per equation
 
 # ============================================================================
@@ -64,6 +64,12 @@ BINARY_OPS: dict[str, callable] = {
 
 UNARY_OPS: dict[str, callable] = {
     "neg": lambda x: -x,
+    "square": lambda x: x ** 2,
+    "sqrt": lambda x: np.sqrt(np.abs(x)),
+    "sin": lambda x: np.sin(x),
+    "cos": lambda x: np.cos(x),
+    "exp": lambda x: np.clip(np.exp(np.clip(x, -50, 50)), -1e15, 1e15),
+    "log": lambda x: np.where(np.abs(x) > 1e-10, np.log(np.abs(x)), 0.0),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -127,7 +133,7 @@ def random_tree(rng: np.random.Generator, variables: list[str],
             return Node("var", rng.choice(variables))
 
     # Internal node: unary or binary
-    if UNARY_OPS and rng.random() < 0.2:
+    if UNARY_OPS and rng.random() < 0.25:
         op = rng.choice(list(UNARY_OPS.keys()))
         child = random_tree(rng, variables, max_depth - 1, method)
         return Node("unary", op, [child])
