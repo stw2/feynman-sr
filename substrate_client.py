@@ -215,7 +215,7 @@ def cmd_publish(nanopub_json_path: str):
 
 def cmd_nanopub_template(equation_id: str, hypothesis: str):
     """Print a nanopub JSON template for an equation investigation."""
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
     slug = equation_id.lower().replace(" ", "-")
     agent_name = os.environ.get("SUBSTRATE_AGENT_NAME", "agent")
 
