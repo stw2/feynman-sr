@@ -37,16 +37,16 @@ from evaluate import EQUATIONS, load_equation_data, r_squared, is_exact
 # ============================================================================
 # HYPERPARAMETERS — agents should tune these
 # ============================================================================
-POPULATION_SIZE = 300
-GENERATIONS = 50
-TOURNAMENT_SIZE = 5
+POPULATION_SIZE = 500
+GENERATIONS = 80
+TOURNAMENT_SIZE = 7
 MAX_DEPTH = 6
 CROSSOVER_PROB = 0.7
 MUTATION_PROB = 0.2
 REPRODUCTION_PROB = 0.1
 PARSIMONY_COEFF = 0.001  # penalize large trees
 ELITISM = 5  # top-N individuals survive unchanged
-TIME_BUDGET_PER_EQ = 60  # seconds per equation
+TIME_BUDGET_PER_EQ = 120  # seconds per equation
 
 # ============================================================================
 # OPERATOR SETS — agents should extend these
@@ -64,6 +64,12 @@ BINARY_OPS: dict[str, callable] = {
 
 UNARY_OPS: dict[str, callable] = {
     "neg": lambda x: -x,
+    "square": lambda x: x ** 2,
+    "sqrt": lambda x: np.sqrt(np.abs(x)),
+    "sin": lambda x: np.sin(x),
+    "cos": lambda x: np.cos(x),
+    "exp": lambda x: np.where(x < 100, np.exp(x), np.exp(np.float64(100))),
+    "log": lambda x: np.where(np.abs(x) > 1e-10, np.log(np.abs(x)), 0.0),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -127,7 +133,7 @@ def random_tree(rng: np.random.Generator, variables: list[str],
             return Node("var", rng.choice(variables))
 
     # Internal node: unary or binary
-    if UNARY_OPS and rng.random() < 0.2:
+    if UNARY_OPS and rng.random() < 0.3:
         op = rng.choice(list(UNARY_OPS.keys()))
         child = random_tree(rng, variables, max_depth - 1, method)
         return Node("unary", op, [child])
@@ -172,13 +178,30 @@ def evaluate_tree(node: Node, X: np.ndarray, var_names: list[str]) -> np.ndarray
     return np.zeros(X.shape[0])
 
 
+def linear_scale(y_pred: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """Find a, b minimizing MSE of a*y_pred + b vs y (linear scaling).
+    Uses numpy lstsq for numerical precision."""
+    mask = np.isfinite(y_pred) & np.isfinite(y)
+    if mask.sum() < 2:
+        return 1.0, 0.0
+    yp = y_pred[mask]
+    yt = y[mask]
+    # Solve [yp, 1] @ [a, b] = yt via least squares
+    A_mat = np.column_stack([yp, np.ones_like(yp)])
+    result, *_ = np.linalg.lstsq(A_mat, yt, rcond=None)
+    return float(result[0]), float(result[1])
+
+
 def fitness(node: Node, X: np.ndarray, y: np.ndarray,
             var_names: list[str]) -> float:
-    """Fitness = negative MSE - parsimony penalty. Higher is better."""
+    """Fitness = negative MSE (with linear scaling) - parsimony penalty. Higher is better."""
     try:
         y_pred = evaluate_tree(node, X, var_names)
         y_pred = np.nan_to_num(y_pred, nan=1e10, posinf=1e10, neginf=-1e10)
-        mse = np.mean((y - y_pred) ** 2)
+        # Linear scaling: fit a*y_pred + b to y
+        a, b = linear_scale(y_pred, y)
+        y_scaled = a * y_pred + b
+        mse = np.mean((y - y_scaled) ** 2)
         if not np.isfinite(mse) or mse > 1e15:
             return -1e15
         return -mse - PARSIMONY_COEFF * node.size()
@@ -338,8 +361,12 @@ def run_equation(eid: str) -> dict:
                     best_expr="NONE", r2_train=0.0, r2_test=0.0,
                     exact_match=False, nodes=0, time_s=elapsed)
 
-    y_pred_train = evaluate_tree(best_tree, X_train, eq["variables"])
-    y_pred_test = evaluate_tree(best_tree, X_test, eq["variables"])
+    y_pred_train_raw = evaluate_tree(best_tree, X_train, eq["variables"])
+    # Apply linear scaling fitted on training data
+    a, b = linear_scale(y_pred_train_raw, y_train)
+    y_pred_train = a * y_pred_train_raw + b
+    y_pred_test_raw = evaluate_tree(best_tree, X_test, eq["variables"])
+    y_pred_test = a * y_pred_test_raw + b
 
     r2_train = r_squared(y_train, y_pred_train)
     r2_test = r_squared(y_test, y_pred_test)
