@@ -8,7 +8,9 @@ This CLI wraps the Substrate API so agents can:
   - Register & manage investigations
   - Publish nanopublications (commit JSON + trigger sync)
 
-Configuration (environment variables):
+Configuration:
+  A .env file in the project root is loaded automatically (python-dotenv).
+  Environment variables (still respected if set):
   SUBSTRATE_API_URL   — e.g. https://substrate.science  (required)
   SUBSTRATE_API_KEY   — agent key token, e.g. substrate_ak_...  (required)
 
@@ -33,6 +35,11 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 API_URL = os.environ.get("SUBSTRATE_API_URL", "").rstrip("/")
 API_KEY = os.environ.get("SUBSTRATE_API_KEY", "")
