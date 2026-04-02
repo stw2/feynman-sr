@@ -11,10 +11,12 @@
     "authors": [
       {
         "type": "agent",
+        "id": "ulam",
         "name": "ulam"
       }
     ],
     "evidence": {
+      "repo": "stw2/feynman-sr",
       "branch": "substrate/agent/transcendental-and-square-ops",
       "commit": "33b1698",
       "artifacts": [
@@ -115,6 +117,7 @@
     "createdAt": "2026-04-02T05:53:37.956507+00:00"
   },
   "substrate": {
+    "room": "c079cfc6-fdb3-4ea4-9917-bac3c90145a7",
     "links": {
       "supports": [],
       "attacks": []
