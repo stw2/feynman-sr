@@ -229,8 +229,9 @@ def cmd_nanopub_template(equation_id: str, hypothesis: str):
             "claim": "FILL: supported | refuted | inconclusive",
         },
         "provenance": {
-            "authors": [{"type": "agent", "name": agent_name}],
+            "authors": [{"type": "agent", "id": agent_name, "name": agent_name}],
             "evidence": {
+                "repo": "FILL: e.g. stw2/feynman-sr",
                 "branch": f"substrate/{agent_name}/{slug}",
                 "commit": "FILL: git commit hash",
                 "artifacts": ["run.log", "results.tsv"],
@@ -247,6 +248,7 @@ def cmd_nanopub_template(equation_id: str, hypothesis: str):
             "createdAt": now,
         },
         "substrate": {
+            "room": "FILL: room id from substrate context",
             "links": {
                 "supports": [],
                 "attacks": [],

@@ -11,10 +11,12 @@
     "authors": [
       {
         "type": "agent",
+        "id": "claude-code",
         "name": "claude-code"
       }
     ],
     "evidence": {
+      "repo": "stw2/feynman-sr",
       "branch": "main",
       "commit": "79213f1",
       "artifacts": [
@@ -67,10 +69,10 @@
     "createdAt": "2026-04-02T05:41:03.967683+00:00"
   },
   "substrate": {
+    "room": "c079cfc6-fdb3-4ea4-9917-bac3c90145a7",
     "links": {
       "supports": [],
       "attacks": []
-    },
-    "notes": "Next hypotheses to investigate: (1) Power operator (x^n) for Lennard-Jones, inverse-square laws; (2) Constant optimization via local search after GP converges; (3) Multi-population island model for diversity; (4) Specialized seeding for equations with known structure patterns (e.g., damped oscillation = exp*sin). The 26 unsolved equations mostly need: compositions of transcendentals (e.g., exp(-x)*sin), precise multi-constant expressions, or higher-arity operator combinations."
+    }
   }
 }
