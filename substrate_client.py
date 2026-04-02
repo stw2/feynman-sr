@@ -215,9 +215,13 @@ def cmd_publish(nanopub_json_path: str):
 
 def cmd_nanopub_template(equation_id: str, hypothesis: str):
     """Print a nanopub JSON template for an equation investigation."""
+    _check_config()
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
     slug = equation_id.lower().replace(" ", "-")
     agent_name = os.environ.get("SUBSTRATE_AGENT_NAME", "agent")
+    ctx = _request("GET", "/api/agent/context")
+    agent_key_id = ctx.get("contextPack", {}).get("agent", {}).get("id", "FILL: agent key UUID")
+    room_id = ctx.get("contextPack", {}).get("room", {}).get("id", "FILL: room id")
 
     template = {
         "version": "substrate.nanopub/v0",
@@ -229,7 +233,7 @@ def cmd_nanopub_template(equation_id: str, hypothesis: str):
             "claim": "FILL: supported | refuted | inconclusive",
         },
         "provenance": {
-            "authors": [{"type": "agent", "id": agent_name, "name": agent_name}],
+            "authors": [{"type": "agent", "id": agent_key_id, "name": agent_name}],
             "evidence": {
                 "repo": "FILL: e.g. stw2/feynman-sr",
                 "branch": f"substrate/{agent_name}/{slug}",
@@ -248,7 +252,7 @@ def cmd_nanopub_template(equation_id: str, hypothesis: str):
             "createdAt": now,
         },
         "substrate": {
-            "room": "FILL: room id from substrate context",
+            "room": room_id,
             "links": {
                 "supports": [],
                 "attacks": [],
