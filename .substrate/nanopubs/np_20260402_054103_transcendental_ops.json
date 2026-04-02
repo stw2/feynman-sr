@@ -1,0 +1,76 @@
+{
+  "version": "substrate.nanopub/v0",
+  "id": "np_20260402_054103_transcendental_ops",
+  "assertion": {
+    "title": "Adding transcendental operators and linear scaling improves exact matches from 17/50 to 24/50",
+    "kind": "result",
+    "statement": "Adding square, sqrt, sin, cos, exp, log unary operators plus linear scaling (lstsq-based) to fitness and final evaluation improves exact match count from 17/50 (baseline) to 24/50 (+41%). Tier 1 goes from 7/10 to 10/10 (perfect), Tier 2 from 8/12 to 9/12, Tier 3 from 2/10 to 4/10, Tier 4 from 0/18 to 1/18. The square operator is critical for quadratic physics formulas (KE, Spring PE, Coulomb, etc). Linear scaling separates constant-finding from structure-finding, letting the GP focus on functional form.",
+    "claim": "supported"
+  },
+  "provenance": {
+    "authors": [
+      {
+        "type": "agent",
+        "name": "claude-code"
+      }
+    ],
+    "evidence": {
+      "branch": "main",
+      "commit": "79213f1",
+      "artifacts": [
+        "run.log"
+      ],
+      "metrics": {
+        "equations_tested": [
+          "eq01-eq50"
+        ],
+        "baseline_exact": 17,
+        "improved_exact": 24,
+        "tier1": {
+          "baseline": "7/10",
+          "improved": "10/10"
+        },
+        "tier2": {
+          "baseline": "8/12",
+          "improved": "9/12"
+        },
+        "tier3": {
+          "baseline": "2/10",
+          "improved": "4/10"
+        },
+        "tier4": {
+          "baseline": "0/18",
+          "improved": "1/18"
+        },
+        "key_new_solves": {
+          "eq01_kinetic_energy": "square(v)*m (was failing, needs 0.5*m*v^2)",
+          "eq05_distance": "t*(v + v + t*a) with linear scaling",
+          "eq08_spring_pe": "square(x)*k with linear scaling for 0.5",
+          "eq22_drag_force": "C_d*A*v*v*rho with linear scaling",
+          "eq24_pendulum_period": "sqrt(l/g) with linear scaling for 2*pi",
+          "eq28_orbital_velocity": "sqrt(M*G/r)",
+          "eq33_shm": "sin(omega*t)*A"
+        },
+        "changes_made": [
+          "Added 6 unary operators: square, sqrt, sin, cos, exp, log (with safe guards)",
+          "Added linear scaling via numpy lstsq in fitness() and run_equation()",
+          "Increased unary selection probability from 0.2 to 0.3",
+          "Increased POPULATION_SIZE from 300 to 500",
+          "Increased GENERATIONS from 50 to 80",
+          "Increased TOURNAMENT_SIZE from 5 to 7",
+          "Increased TIME_BUDGET_PER_EQ from 60 to 120 seconds"
+        ]
+      }
+    }
+  },
+  "publicationInfo": {
+    "createdAt": "2026-04-02T05:41:03.967683+00:00"
+  },
+  "substrate": {
+    "links": {
+      "supports": [],
+      "attacks": []
+    },
+    "notes": "Next hypotheses to investigate: (1) Power operator (x^n) for Lennard-Jones, inverse-square laws; (2) Constant optimization via local search after GP converges; (3) Multi-population island model for diversity; (4) Specialized seeding for equations with known structure patterns (e.g., damped oscillation = exp*sin). The 26 unsolved equations mostly need: compositions of transcendentals (e.g., exp(-x)*sin), precise multi-constant expressions, or higher-arity operator combinations."
+  }
+}
