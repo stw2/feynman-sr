@@ -20,9 +20,14 @@ Examples:
 | File | Role |
 |---|---|
 | `train.py` | **ONLY file you modify.** GP implementation. |
-| `prepare.py` | Equation catalogue, data generation, evaluation. READ ONLY. |
+| `evaluate.py` | Data loading & metrics (R², exact match). READ ONLY. |
 | `substrate_client.py` | Substrate API client. READ ONLY. |
 | `run.sh` | Runs train.py, saves to run.log. |
+| `equations/` | Generated data (.npz) + metadata.json. No formulas. |
+
+`prepare.py` contains ground-truth formulas and is **not accessible** to you
+(blocked via .claudeignore). The data has already been generated — you work
+only with the numeric arrays in `equations/*.npz`.
 
 ## Session workflow
 

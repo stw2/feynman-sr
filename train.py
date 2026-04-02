@@ -10,7 +10,6 @@ Usage:
 Output format (parsed by evaluation harness):
     equation: <id>
     name: <human name>
-    target: <ground truth formula>
     best_expr: <discovered expression string>
     r2_train: <float>
     r2_test: <float>
@@ -33,7 +32,7 @@ import time
 
 import numpy as np
 
-from prepare import EQUATIONS, load_equation_data, r_squared, is_exact
+from evaluate import EQUATIONS, load_equation_data, r_squared, is_exact
 
 # ============================================================================
 # HYPERPARAMETERS — agents should tune these
@@ -324,8 +323,8 @@ def run_equation(eid: str) -> dict:
     eq = EQUATIONS[eid]
     print(f"\n{'='*60}")
     print(f"Equation: {eid} — {eq['name']}")
-    print(f"Target:   {eq['formula']}")
     print(f"Variables: {eq['variables']}")
+    print(f"Tier: {eq['tier']}")
     print(f"{'='*60}")
 
     X_train, y_train, X_test, y_test = load_equation_data(eid)
@@ -335,7 +334,7 @@ def run_equation(eid: str) -> dict:
     elapsed = time.time() - t0
 
     if best_tree is None:
-        return dict(equation=eid, name=eq["name"], target=eq["formula"],
+        return dict(equation=eid, name=eq["name"],
                     best_expr="NONE", r2_train=0.0, r2_test=0.0,
                     exact_match=False, nodes=0, time_s=elapsed)
 
@@ -349,7 +348,6 @@ def run_equation(eid: str) -> dict:
     result = dict(
         equation=eid,
         name=eq["name"],
-        target=eq["formula"],
         best_expr=str(best_tree),
         r2_train=r2_train,
         r2_test=r2_test,

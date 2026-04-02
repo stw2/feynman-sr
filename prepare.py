@@ -373,6 +373,21 @@ def main():
     print(f"Preparing {len(EQUATIONS)} equations → {DATA_DIR}/")
     for eid in sorted(EQUATIONS):
         prepare_equation(eid)
+
+    # Write metadata.json (safe for agents — NO formulas or lambdas)
+    metadata = {}
+    for eid, eq in sorted(EQUATIONS.items()):
+        metadata[eid] = dict(
+            id=eid,
+            name=eq["name"],
+            source=eq["source"],
+            variables=eq["variables"],
+            tier=eq["tier"],
+        )
+    meta_path = os.path.join(DATA_DIR, "metadata.json")
+    with open(meta_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Metadata written to {meta_path}")
     print("Done.")
 
 

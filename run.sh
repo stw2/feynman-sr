@@ -13,8 +13,11 @@ else
   PYTHON=python3
 fi
 
-# Ensure equation data exists
-$PYTHON prepare.py > /dev/null 2>&1
+# Ensure equation data + metadata exist (prepare.py has ground truth — not for agents)
+if [ ! -f equations/metadata.json ]; then
+  echo "Generating equation data..."
+  $PYTHON prepare.py
+fi
 
 # Run GP
 $PYTHON train.py "$@" 2>&1 | tee run.log
