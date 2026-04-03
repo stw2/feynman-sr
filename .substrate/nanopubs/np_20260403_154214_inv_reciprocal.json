@@ -2,9 +2,9 @@
   "version": "substrate.nanopub/v0",
   "id": "np_20260403_154214_inv_reciprocal",
   "assertion": {
-    "title": "inv (reciprocal) operator and compact templates reduce total nodes 355→350 while maintaining 50/50",
+    "title": "inv (reciprocal) operator and compact templates reduce total nodes 355\u2192350 while maintaining 50/50",
     "kind": "result",
-    "statement": "Adding inv(x)=1/x as a unary operator enables reciprocal-sum templates that are more compact than division-based equivalents for harmonic-mean equations (eq19, eq20, eq21), and fixing the eq34 Gaussian template to use square(a/b) instead of square(a)/square(b) saves an additional node — total reduction of 5 nodes across 4 equations while all 50 exact matches are maintained.",
+    "statement": "Adding inv(x)=1/x as a unary operator enables reciprocal-sum templates that are more compact than division-based equivalents for harmonic-mean equations (eq19, eq20, eq21), and fixing the eq34 Gaussian template to use square(a/b) instead of square(a)/square(b) saves an additional node \u2014 total reduction of 5 nodes across 4 equations while all 50 exact matches are maintained.",
     "claim": "supported"
   },
   "provenance": {
@@ -25,7 +25,13 @@
       "metrics": {
         "r2_test": 1.0,
         "exact_match": true,
-        "equations_tested": ["eq19", "eq20", "eq21", "eq34", "all"],
+        "equations_tested": [
+          "eq19",
+          "eq20",
+          "eq21",
+          "eq34",
+          "all"
+        ],
         "before": {
           "total_nodes": 355,
           "exact_matches": "50/50",
