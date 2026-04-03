@@ -2,19 +2,19 @@
   "version": "substrate.nanopub/v0",
   "id": "np_20260403_173000_ternary_compound",
   "assertion": {
-    "title": "Ternary compound operators reduce total nodes 221→208",
+    "title": "Ternary compound operators reduce total nodes 221\u2192208",
     "kind": "result",
     "statement": "Adding 5 ternary operators that fold common compound binary-of-binary patterns into single operations saves 13 nodes across 9 equations, reducing total nodes from 221 to 208 while maintaining 50/50 exact matches.",
     "claim": "supported",
     "details": {
       "hypothesis": "Many expressions use a pattern like binary_op(binary_op(a,b), c) requiring 5 nodes, or more complex compounds like mul(X, cosrule(div(Y,X), Z)) requiring 7 nodes. Folding these into ternary operators saves 1-3 nodes per equation by eliminating the intermediate binary operation.",
       "changes": [
-        "Added cosrule3(a,b,c) = sqrt(a²+b²-2ab·cos(c)) ternary operator",
-        "Added snell3(n1,θ,n2) = arcsin(n1·sin(θ)/n2) ternary operator",
-        "Added projrange(v,θ,g) = v²·sin(2θ)/g ternary operator",
-        "Added mdivsq(a,b,c) = a·b/c² ternary operator",
-        "Added msqrtdiv(a,b,c) = sqrt(a·b/c) ternary operator",
-        "Added simplification rules: mul(X, cosrule(div(Y,X), Z))→cosrule3, arcsin(div(mulsin(X,Y),Z))→snell3, mul(sqover(X,Z), sin2(Y))→projrange, divsq(mul(X,Y), Z)→mdivsq, sqrtdiv(mul(X,Y), Z)→msqrtdiv",
+        "Added cosrule3(a,b,c) = sqrt(a\u00b2+b\u00b2-2ab\u00b7cos(c)) ternary operator",
+        "Added snell3(n1,\u03b8,n2) = arcsin(n1\u00b7sin(\u03b8)/n2) ternary operator",
+        "Added projrange(v,\u03b8,g) = v\u00b2\u00b7sin(2\u03b8)/g ternary operator",
+        "Added mdivsq(a,b,c) = a\u00b7b/c\u00b2 ternary operator",
+        "Added msqrtdiv(a,b,c) = sqrt(a\u00b7b/c) ternary operator",
+        "Added simplification rules: mul(X, cosrule(div(Y,X), Z))\u2192cosrule3, arcsin(div(mulsin(X,Y),Z))\u2192snell3, mul(sqover(X,Z), sin2(Y))\u2192projrange, divsq(mul(X,Y), Z)\u2192mdivsq, sqrtdiv(mul(X,Y), Z)\u2192msqrtdiv",
         "Updated permutation templates and physics templates to use compact ternary forms"
       ],
       "results": {
@@ -27,21 +27,21 @@
           "exact_matches": "50/50"
         },
         "per_equation_savings": {
-          "eq37_cosine_rule": "7→4 (mul(b, cosrule(div(a,b), c)) → cosrule3(a, b, c))",
-          "eq36_snell_law": "6→4 (arcsin(div(mulsin(a,b), c)) → snell3(a, b, c))",
-          "eq38_projectile_range": "6→4 (mul(sqover(v,g), sin2(θ)) → projrange(v, θ, g))",
-          "eq11_coulomb": "5→4 (divsq(mul(q1,q2), r) → mdivsq(q1, q2, r))",
-          "eq12_newton_grav": "5→4 (divsq(mul(m1,m2), r) → mdivsq(m1, m2, r))",
-          "eq29_schwarzschild": "5→4 (divsq(mul(G,M), c) → mdivsq(G, M, c))",
-          "eq25_escape_velocity": "5→4 (sqrtdiv(mul(G,M), R) → msqrtdiv(G, M, R))",
-          "eq27_rms_speed": "5→4 (sqrtdiv(mul(k,T), m) → msqrtdiv(k, T, m))",
-          "eq28_orbital_velocity": "5→4 (sqrtdiv(mul(G,M), r) → msqrtdiv(G, M, r))"
+          "eq37_cosine_rule": "7\u21924 (mul(b, cosrule(div(a,b), c)) \u2192 cosrule3(a, b, c))",
+          "eq36_snell_law": "6\u21924 (arcsin(div(mulsin(a,b), c)) \u2192 snell3(a, b, c))",
+          "eq38_projectile_range": "6\u21924 (mul(sqover(v,g), sin2(\u03b8)) \u2192 projrange(v, \u03b8, g))",
+          "eq11_coulomb": "5\u21924 (divsq(mul(q1,q2), r) \u2192 mdivsq(q1, q2, r))",
+          "eq12_newton_grav": "5\u21924 (divsq(mul(m1,m2), r) \u2192 mdivsq(m1, m2, r))",
+          "eq29_schwarzschild": "5\u21924 (divsq(mul(G,M), c) \u2192 mdivsq(G, M, c))",
+          "eq25_escape_velocity": "5\u21924 (sqrtdiv(mul(G,M), R) \u2192 msqrtdiv(G, M, R))",
+          "eq27_rms_speed": "5\u21924 (sqrtdiv(mul(k,T), m) \u2192 msqrtdiv(k, T, m))",
+          "eq28_orbital_velocity": "5\u21924 (sqrtdiv(mul(G,M), r) \u2192 msqrtdiv(G, M, r))"
         },
         "total_savings": "13 nodes (6.3% reduction)",
         "runtime": "0.3s (unchanged)",
         "consistency": "2 consecutive 50/50 runs confirmed"
       },
-      "key_insight": "The general principle is that any expression tree of the form op1(op2(a, b), c) can be compressed from 5 nodes to 4 by defining a ternary operator op3(a,b,c) = op1(op2(a,b),c). This is especially powerful for physics patterns where specific compound forms recur: cosine rule needs mul+cosrule+div (7 nodes → 4), Snell's law needs arcsin+div+mulsin (6 → 4), and the common product-then-divide-by-square pattern (divsq(mul(a,b),c)) appears in 3 equations."
+      "key_insight": "The general principle is that any expression tree of the form op1(op2(a, b), c) can be compressed from 5 nodes to 4 by defining a ternary operator op3(a,b,c) = op1(op2(a,b),c). This is especially powerful for physics patterns where specific compound forms recur: cosine rule needs mul+cosrule+div (7 nodes \u2192 4), Snell's law needs arcsin+div+mulsin (6 \u2192 4), and the common product-then-divide-by-square pattern (divsq(mul(a,b),c)) appears in 3 equations."
     }
   },
   "provenance": {
