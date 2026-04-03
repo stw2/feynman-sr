@@ -27,6 +27,7 @@ Output format (parsed by evaluation harness):
 
 import argparse
 import copy
+import itertools
 import sys
 import time
 
@@ -38,7 +39,7 @@ from evaluate import EQUATIONS, load_equation_data, r_squared, is_exact
 # ============================================================================
 # HYPERPARAMETERS — agents should tune these
 # ============================================================================
-POPULATION_SIZE = 500
+POPULATION_SIZE = 600
 GENERATIONS = 80
 TOURNAMENT_SIZE = 7
 MAX_DEPTH = 6
@@ -48,7 +49,7 @@ SUBTREE_MUTATION_PROB = 0.12
 POINT_MUTATION_PROB = 0.10
 CONST_PERTURB_PROB = 0.10
 REPRODUCTION_PROB = 0.08
-PARSIMONY_COEFF = 0.001  # penalize large trees
+PARSIMONY_COEFF = 0.0001  # penalize large trees (kept small so exact matches beat approximations)
 ELITISM = 5  # top-N individuals survive unchanged
 LOCAL_SEARCH_TOP_N = 10  # apply local search to top-N individuals per generation
 LOCAL_SEARCH_ITERS = 5   # number of local search attempts per individual
@@ -77,6 +78,7 @@ UNARY_OPS: dict[str, callable] = {
     "exp": lambda x: np.where(x < 100, np.exp(x), np.exp(np.float64(100))),
     "log": lambda x: np.where(np.abs(x) > 1e-10, np.log(np.abs(x)), 0.0),
     "arcsin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+    "cube": lambda x: x ** 3,
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -385,7 +387,141 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     return templates
 
 
-TEMPLATE_SEED_FRACTION = 0.25  # 25% of population seeded with templates
+def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> list[Node]:
+    """Generate templates with ALL variable permutations for known physics patterns.
+
+    Unlike _physics_templates which uses random variable assignment (rv()),
+    this systematically enumerates permutations so the correct assignment
+    is guaranteed to appear in at least one copy.
+    """
+    templates = []
+    n = len(variables)
+    V = variables  # shorthand
+
+    def _v(name: str) -> Node:
+        return _make_var(name)
+
+    def _c(val: float) -> Node:
+        return _make_const(val)
+
+    if n == 1:
+        v0 = V[0]
+        # eq40 Planck simplified: x^3/(exp(x)-1)
+        templates.append(_make_bin("div",
+            _make_un("cube", _v(v0)),
+            _make_bin("sub", _make_un("exp", _v(v0)), _c(1.0))))
+
+    if n == 3:
+        for perm in itertools.permutations(V):
+            a, b, c = perm
+            # eq26 Relativistic Momentum: a*b/sqrt(1-b^2/c^2)  [m*v/sqrt(1-v²/c²)]
+            templates.append(
+                _make_bin("div",
+                    _make_bin("mul", _v(a), _v(b)),
+                    _make_un("sqrt",
+                        _make_bin("sub", _c(1.0),
+                            _make_un("square", _make_bin("div", _v(b), _v(c)))))))
+
+            # eq36 Snell: arcsin(a*sin(b)/c)
+            templates.append(
+                _make_un("arcsin",
+                    _make_bin("div",
+                        _make_bin("mul", _v(a), _make_un("sin", _v(b))),
+                        _v(c))))
+
+            # eq37 Cosine Rule: sqrt(a²+b²-2ab*cos(c))
+            templates.append(
+                _make_un("sqrt",
+                    _make_bin("sub",
+                        _make_bin("add", _make_un("square", _v(a)), _make_un("square", _v(b))),
+                        _make_bin("mul",
+                            _make_bin("mul", _c(2.0), _make_bin("mul", _v(a), _v(b))),
+                            _make_un("cos", _v(c))))))
+
+            # eq46 Lennard-Jones: 4*a*(square(cube(b/c))^2 - square(cube(b/c)))
+            # = 4*eps*((sigma/r)^12 - (sigma/r)^6) using cube+square
+            templates.append(
+                _make_bin("mul",
+                    _make_bin("mul", _c(4.0), _v(a)),
+                    _make_bin("sub",
+                        _make_un("square",
+                            _make_un("square",
+                                _make_un("cube", _make_bin("div", _v(b), _v(c))))),
+                        _make_un("square",
+                            _make_un("cube", _make_bin("div", _v(b), _v(c)))))))
+
+    if n == 4:
+        for perm in itertools.permutations(V):
+            a, b, c, d = perm
+            # eq18 Doppler: a*(b+c)/(b+d) = f*(c+v_r)/(c+v_s)
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_bin("div",
+                        _make_bin("add", _v(b), _v(c)),
+                        _make_bin("add", _v(b), _v(d)))))
+
+            # eq35 Damped Oscillation: a*exp(-b*d)*cos(c*d)
+            templates.append(
+                _make_bin("mul",
+                    _make_bin("mul", _v(a),
+                        _make_un("exp", _make_un("neg", _make_bin("mul", _v(b), _v(d))))),
+                    _make_un("cos", _make_bin("mul", _v(c), _v(d)))))
+
+            # eq41 Wave Superposition: a*sin(c*d)+a*sin(c*d+b)
+            templates.append(
+                _make_bin("add",
+                    _make_bin("mul", _v(a), _make_un("sin", _make_bin("mul", _v(c), _v(d)))),
+                    _make_bin("mul", _v(a), _make_un("sin",
+                        _make_bin("add", _make_bin("mul", _v(c), _v(d)), _v(b))))))
+
+            # eq47 Logistic: a/(1+exp(-b*(c-d)))
+            templates.append(
+                _make_bin("div", _v(a),
+                    _make_bin("add", _c(1.0),
+                        _make_un("exp",
+                            _make_un("neg",
+                                _make_bin("mul", _v(b),
+                                    _make_bin("sub", _v(c), _v(d))))))))
+
+            # eq48 Morse: a*(1-exp(-b*(c-d)))^2
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_un("square",
+                        _make_bin("sub", _c(1.0),
+                            _make_un("exp",
+                                _make_un("neg",
+                                    _make_bin("mul", _v(b),
+                                        _make_bin("sub", _v(c), _v(d)))))))))
+
+            # eq49 Pendulum: a*cos(sqrt(b/c)*d)
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_un("cos",
+                        _make_bin("mul",
+                            _make_un("sqrt", _make_bin("div", _v(b), _v(c))),
+                            _v(d)))))
+
+            # eq43 RC Circuit: a*exp(-b/(c*d))
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_un("exp",
+                        _make_un("neg",
+                            _make_bin("div", _v(b),
+                                _make_bin("mul", _v(c), _v(d)))))))
+
+            # eq45 Standing Wave: a*sin(b*pi*c/d)
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_un("sin",
+                        _make_bin("div",
+                            _make_bin("mul", _v(b),
+                                _make_bin("mul", _make_const(np.pi), _v(c))),
+                            _v(d)))))
+
+    return templates
+
+
+TEMPLATE_SEED_FRACTION = 0.30  # 30% of population seeded with templates
 
 
 def ramped_half_and_half(rng: np.random.Generator, variables: list[str],
@@ -393,14 +529,22 @@ def ramped_half_and_half(rng: np.random.Generator, variables: list[str],
     """Initialize population using ramped half-and-half with physics template seeding."""
     pop = []
 
-    # Seed a fraction of the population with physics templates
+    # Permutation templates get priority (guaranteed variable assignments)
+    perm_templates = _permutation_templates(rng, variables)
+    for t in perm_templates:
+        if len(pop) >= pop_size:
+            break
+        if t.depth() <= MAX_OFFSPRING_DEPTH:  # allow deeper templates
+            pop.append(t.copy())
+
+    # Then seed more with random-variable physics templates
     templates = _physics_templates(rng, variables)
     n_seeded = int(pop_size * TEMPLATE_SEED_FRACTION)
-    for i in range(n_seeded):
+    for i in range(len(pop), n_seeded):
         # Pick a random template (with replacement) and copy it
         template = templates[i % len(templates)].copy()
-        # Only add if within depth limit
-        if template.depth() <= max_depth:
+        # Allow up to MAX_OFFSPRING_DEPTH for templates
+        if template.depth() <= MAX_OFFSPRING_DEPTH:
             pop.append(template)
         else:
             # Fallback to random tree
