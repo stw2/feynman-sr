@@ -23,17 +23,40 @@
         "run.log"
       ],
       "metrics": {
-        "equations_tested": ["eq01-eq50"],
+        "equations_tested": [
+          "eq01-eq50"
+        ],
         "baseline_exact": 29,
         "improved_exact": 34,
         "baseline_mean_r2": 0.968,
         "improved_mean_r2": 0.985,
-        "tier1": {"baseline": "10/10", "improved": "10/10"},
-        "tier2": {"baseline": "10/12", "improved": "10/12"},
-        "tier3": {"baseline": "6/10", "improved": "6/10"},
-        "tier4": {"baseline": "5/18", "improved": "8/18"},
-        "new_exact_matches": ["eq20", "eq35", "eq38", "eq41", "eq43", "eq45"],
-        "lost_exact_matches": ["eq44"],
+        "tier1": {
+          "baseline": "10/10",
+          "improved": "10/10"
+        },
+        "tier2": {
+          "baseline": "10/12",
+          "improved": "10/12"
+        },
+        "tier3": {
+          "baseline": "6/10",
+          "improved": "6/10"
+        },
+        "tier4": {
+          "baseline": "5/18",
+          "improved": "8/18"
+        },
+        "new_exact_matches": [
+          "eq20",
+          "eq35",
+          "eq38",
+          "eq41",
+          "eq43",
+          "eq45"
+        ],
+        "lost_exact_matches": [
+          "eq44"
+        ],
         "changes_made": [
           "Replaced tournament selection with epsilon-lexicase selection using MAD-based epsilon thresholds",
           "Down-sampled lexicase to 50 cases per selection for efficiency",
