@@ -68,6 +68,7 @@ UNARY_OPS: dict[str, callable] = {
     "neg": lambda x: -x,
     "square": lambda x: x ** 2,
     "sqrt": lambda x: np.sqrt(np.abs(x)),
+    "inv": lambda x: np.where(np.abs(x) > 1e-10, 1.0 / x, 0.0),
     "sin": lambda x: np.sin(x),
     "cos": lambda x: np.cos(x),
     "exp": lambda x: np.where(x < 100, np.exp(x), np.exp(np.float64(100))),
@@ -351,6 +352,56 @@ def tournament_select(rng: np.random.Generator, population: list[Node],
     return population[best_idx]
 
 
+def compute_case_errors(population: list[Node], X: np.ndarray, y: np.ndarray,
+                        var_names: list[str]) -> np.ndarray:
+    """Compute per-case squared errors for all individuals.
+    Returns array of shape (pop_size, n_cases)."""
+    n = len(population)
+    m = len(y)
+    errors = np.full((n, m), 1e15)
+    for i, ind in enumerate(population):
+        try:
+            y_pred = evaluate_tree(ind, X, var_names)
+            y_pred = np.nan_to_num(y_pred, nan=1e10, posinf=1e10, neginf=-1e10)
+            a, b = linear_scale(y_pred, y)
+            y_scaled = a * y_pred + b
+            case_err = (y - y_scaled) ** 2
+            if np.all(np.isfinite(case_err)):
+                errors[i] = case_err
+        except Exception:
+            pass
+    return errors
+
+
+def epsilon_lexicase_select(rng: np.random.Generator, population: list[Node],
+                            case_errors: np.ndarray, epsilons: np.ndarray,
+                            max_cases: int = 50) -> Node:
+    """Epsilon-lexicase selection with down-sampling for efficiency.
+    case_errors: shape (pop_size, n_cases)
+    epsilons: shape (n_cases,) - per-case epsilon thresholds (MAD)
+    max_cases: subsample this many cases for efficiency."""
+    n_pop, n_cases = case_errors.shape
+    candidates = np.arange(n_pop)
+
+    # Down-sample cases for efficiency
+    if n_cases > max_cases:
+        case_indices = rng.choice(n_cases, size=max_cases, replace=False)
+    else:
+        case_indices = np.arange(n_cases)
+    rng.shuffle(case_indices)
+
+    for case in case_indices:
+        if len(candidates) <= 1:
+            break
+        errors_on_case = case_errors[candidates, case]
+        best = errors_on_case.min()
+        threshold = best + epsilons[case]
+        mask = errors_on_case <= threshold
+        candidates = candidates[mask]
+
+    return population[rng.choice(candidates)]
+
+
 # ============================================================================
 # EVOLUTION
 # ============================================================================
@@ -370,7 +421,16 @@ def _single_evolve(X_train: np.ndarray, y_train: np.ndarray,
         if time.time() - start > time_budget:
             break
 
-        fitnesses = [fitness(ind, X_train, y_train, variables) for ind in population]
+        # Compute per-case errors and aggregate fitnesses
+        case_errors = compute_case_errors(population, X_train, y_train, variables)
+        fitnesses = [
+            -float(np.mean(case_errors[i])) - PARSIMONY_COEFF * population[i].size()
+            for i in range(len(population))
+        ]
+
+        # Compute epsilon thresholds (MAD per case) for lexicase
+        medians = np.median(case_errors, axis=0)
+        epsilons = np.median(np.abs(case_errors - medians), axis=0)
 
         gen_best_idx = max(range(len(fitnesses)), key=lambda i: fitnesses[i])
         if fitnesses[gen_best_idx] > best_fitness:
@@ -401,17 +461,17 @@ def _single_evolve(X_train: np.ndarray, y_train: np.ndarray,
         while len(next_pop) < POPULATION_SIZE:
             r = rng.random()
             if r < CROSSOVER_PROB:
-                p1 = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
-                p2 = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
+                p1 = epsilon_lexicase_select(rng, population, case_errors, epsilons)
+                p2 = epsilon_lexicase_select(rng, population, case_errors, epsilons)
                 child = crossover(rng, p1, p2, MAX_DEPTH)
             elif r < CROSSOVER_PROB + MUTATION_PROB:
-                parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
+                parent = epsilon_lexicase_select(rng, population, case_errors, epsilons)
                 child = mutate(rng, parent, variables, MAX_DEPTH)
             elif r < CROSSOVER_PROB + MUTATION_PROB + POINT_MUTATION_PROB:
-                parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
+                parent = epsilon_lexicase_select(rng, population, case_errors, epsilons)
                 child = point_mutate(rng, parent, variables)
             else:
-                child = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE).copy()
+                child = epsilon_lexicase_select(rng, population, case_errors, epsilons).copy()
             next_pop.append(child)
 
         population = next_pop
