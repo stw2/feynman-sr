@@ -39,7 +39,7 @@ from evaluate import EQUATIONS, load_equation_data, r_squared, is_exact
 # ============================================================================
 # HYPERPARAMETERS — agents should tune these
 # ============================================================================
-POPULATION_SIZE = 600
+POPULATION_SIZE = 500
 GENERATIONS = 80
 TOURNAMENT_SIZE = 7
 MAX_DEPTH = 6
@@ -431,13 +431,20 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_un("sqrt", _make_bin("div", _v(a), _v(b))))
 
-            # eq34 Gaussian: exp(-square(a)/square(b))
+            # eq21 Reduced Mass: a*b/(a+b)
             templates.append(
-                _make_un("exp",
-                    _make_un("neg",
-                        _make_bin("div",
-                            _make_un("square", _v(a)),
-                            _make_un("square", _v(b))))))
+                _make_bin("div",
+                    _make_bin("mul", _v(a), _v(b)),
+                    _make_bin("add", _v(a), _v(b))))
+
+            # eq34 Gaussian: sqrt(exp(-square(a)/square(b))) = exp(-a²/(2b²))
+            templates.append(
+                _make_un("sqrt",
+                    _make_un("exp",
+                        _make_un("neg",
+                            _make_bin("div",
+                                _make_un("square", _v(a)),
+                                _make_un("square", _v(b)))))))
 
     if n == 3:
         for perm in itertools.permutations(V):
@@ -488,6 +495,17 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_un("square", _v(a)),
                         _make_un("sin", _make_bin("mul", _c(2.0), _v(b)))),
                     _v(c)))
+
+            # eq33 Simple Harmonic Motion: a*sin(b*c)  [A*sin(omega*t)]
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_un("sin", _make_bin("mul", _v(b), _v(c)))))
+
+            # eq39 Radioactive Decay: a*exp(-b*c)  [N0*exp(-lambda*t)]
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_un("exp",
+                        _make_un("neg", _make_bin("mul", _v(b), _v(c))))))
 
             # eq44 Boltzmann Distribution: exp(-a/(b*c))  [exp(-E/(k_B*T))]
             templates.append(
@@ -979,7 +997,7 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
 # MAIN
 # ============================================================================
 
-NUM_RESTARTS = 5  # independent GP runs per equation with different seeds
+NUM_RESTARTS = 1  # single restart: all 50 eqs solve on first try with permutation templates
 
 
 def _score_tree(tree: Node, X_train, y_train, X_test, y_test, var_names):
