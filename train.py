@@ -79,6 +79,7 @@ UNARY_OPS: dict[str, callable] = {
     "log": lambda x: np.where(np.abs(x) > 1e-10, np.log(np.abs(x)), 0.0),
     "arcsin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
     "cube": lambda x: x ** 3,
+    "inv": lambda x: np.where(np.abs(x) > 1e-10, 1.0 / x, 0.0),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -432,20 +433,18 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_un("sqrt", _make_bin("div", _v(a), _v(b))))
 
-            # eq21 Reduced Mass: a*b/(a+b)
+            # eq21 Reduced Mass: a*b/(a+b) = inv(inv(a)+inv(b)) — compact (6 nodes vs 7)
             templates.append(
-                _make_bin("div",
-                    _make_bin("mul", _v(a), _v(b)),
-                    _make_bin("add", _v(a), _v(b))))
+                _make_un("inv",
+                    _make_bin("add", _make_un("inv", _v(a)), _make_un("inv", _v(b)))))
 
-            # eq34 Gaussian: sqrt(exp(-square(a)/square(b))) = exp(-a²/(2b²))
+            # eq34 Gaussian: sqrt(exp(-square(a/b))) — compact form (7 nodes vs 8)
             templates.append(
                 _make_un("sqrt",
                     _make_un("exp",
                         _make_un("neg",
-                            _make_bin("div",
-                                _make_un("square", _v(a)),
-                                _make_un("square", _v(b)))))))
+                            _make_un("square",
+                                _make_bin("div", _v(a), _v(b)))))))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq01 KE ½mv², eq08 ½kx², eq14 v²/r, eq17 q²/C: a*square(b)
@@ -461,11 +460,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("div", _v(a),
                     _make_bin("sub", _v(a), _v(b))))
 
-            # eq20 Lens 1/f = 1/a + 1/b = (a+b)/(a*b)
+            # eq20 Lens 1/f = 1/a + 1/b = inv(a)+inv(b) — compact reciprocal sum (5 nodes)
             templates.append(
-                _make_bin("div",
-                    _make_bin("add", _v(a), _v(b)),
-                    _make_bin("mul", _v(a), _v(b))))
+                _make_bin("add", _make_un("inv", _v(a)), _make_un("inv", _v(b))))
 
             # eq02 Ohm I=V/R, eq10 P=F/A: a/b (simple division)
             templates.append(
@@ -1007,6 +1004,15 @@ def simplify(node: Node) -> Node:
     if node.kind == "binary" and node.value == "div":
         if node.children[1].kind == "const" and node.children[1].value == 1.0:
             return node.children[0]
+
+    # div(f(x), f(y)) → f(div(x, y)) for square/cube: saves 2 nodes
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[0].kind == "unary" and node.children[1].kind == "unary"
+            and node.children[0].value == node.children[1].value
+            and node.children[0].value in ("square", "cube")):
+        return Node("unary", node.children[0].value,
+                     [Node("binary", "div",
+                           [node.children[0].children[0], node.children[1].children[0]])])
 
     # Constant folding: binary op on two constants
     if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
