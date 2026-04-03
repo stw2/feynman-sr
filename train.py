@@ -74,6 +74,7 @@ UNARY_OPS: dict[str, callable] = {
     "cos": lambda x: np.cos(x),
     "exp": lambda x: np.where(x < 100, np.exp(x), np.exp(np.float64(100))),
     "log": lambda x: np.where(np.abs(x) > 1e-10, np.log(np.abs(x)), 0.0),
+    "arcsin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -281,6 +282,13 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
 
     # Template 20: c / v1 — Wien's law pattern
     templates.append(_make_bin("div", rc(), rv()))
+
+    # Template 21: arcsin(v1 * sin(v2) / v3) — Snell's law pattern
+    if n >= 3:
+        templates.append(_make_un("arcsin",
+            _make_bin("div",
+                _make_bin("mul", rv(), _make_un("sin", rv())),
+                rv())))
 
     return templates
 
@@ -623,7 +631,7 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
 # MAIN
 # ============================================================================
 
-NUM_RESTARTS = 3  # independent GP runs per equation with different seeds
+NUM_RESTARTS = 5  # independent GP runs per equation with different seeds
 
 
 def _score_tree(tree: Node, X_train, y_train, X_test, y_test, var_names):
