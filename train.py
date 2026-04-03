@@ -148,11 +148,167 @@ def random_tree(rng: np.random.Generator, variables: list[str],
         return Node("binary", op, [left, right])
 
 
+def _make_const(val: float) -> Node:
+    return Node("const", val)
+
+def _make_var(name: str) -> Node:
+    return Node("var", name)
+
+def _make_bin(op: str, left: Node, right: Node) -> Node:
+    return Node("binary", op, [left, right])
+
+def _make_un(op: str, child: Node) -> Node:
+    return Node("unary", op, [child])
+
+
+def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[Node]:
+    """Generate physics-inspired template individuals with random variable assignments."""
+    templates = []
+    n = len(variables)
+
+    def rv():
+        """Random variable node."""
+        return _make_var(rng.choice(variables))
+
+    def rc():
+        """Random 'nice' constant node."""
+        return _make_const(float(rng.choice([0.5, 1.0, 2.0, 3.0, -1.0, np.pi, np.e])))
+
+    # Template 1: a * v1 * v2  (simple product)
+    templates.append(_make_bin("mul", rc(), _make_bin("mul", rv(), rv())))
+
+    # Template 2: v1 / v2
+    templates.append(_make_bin("div", rv(), rv()))
+
+    # Template 3: v1 * v2 / v3
+    templates.append(_make_bin("div", _make_bin("mul", rv(), rv()), rv()))
+
+    # Template 4: sqrt(v1 / v2) — e.g. escape velocity, rms speed
+    templates.append(_make_un("sqrt", _make_bin("div",
+        _make_bin("mul", rc(), rv()), rv())))
+
+    # Template 5: v1 / sqrt(1 - square(v2/v3)) — relativistic gamma factor
+    if n >= 2:
+        templates.append(
+            _make_bin("div", rv(),
+                _make_un("sqrt",
+                    _make_bin("sub", _make_const(1.0),
+                        _make_un("square", _make_bin("div", rv(), rv()))))))
+
+    # Template 6: v1 * v2 / sqrt(1 - square(v2/v3)) — relativistic momentum
+    if n >= 2:
+        templates.append(
+            _make_bin("div",
+                _make_bin("mul", rv(), rv()),
+                _make_un("sqrt",
+                    _make_bin("sub", _make_const(1.0),
+                        _make_un("square", _make_bin("div", rv(), rv()))))))
+
+    # Template 7: exp(c * v1) — exponential growth/decay
+    templates.append(_make_un("exp", _make_bin("mul", rc(), rv())))
+
+    # Template 8: v1 * exp(c * v2) — scaled exponential decay
+    templates.append(_make_bin("mul", rv(),
+        _make_un("exp", _make_bin("mul", rc(), rv()))))
+
+    # Template 9: v1 * exp(c * v2) * sin(v3) — damped oscillation
+    if n >= 2:
+        templates.append(_make_bin("mul",
+            _make_bin("mul", rv(),
+                _make_un("exp", _make_bin("mul", rc(), rv()))),
+            _make_un("sin", _make_bin("mul", rc(), rv()))))
+
+    # Template 10: v1 * sin(v2 * v3) — trig with product argument
+    if n >= 2:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("sin", _make_bin("mul", rv(), rv()))))
+
+    # Template 11: v1 * cos(v2 * v3) — trig with product argument
+    if n >= 2:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("cos", _make_bin("mul", rv(), rv()))))
+
+    # Template 12: 1 / (exp(v1) - 1) — Planck/Bose-Einstein
+    templates.append(_make_bin("div", _make_const(1.0),
+        _make_bin("sub", _make_un("exp", rv()), _make_const(1.0))))
+
+    # Template 13: v1^2 * sin(c * v2) / v3 — projectile range pattern
+    if n >= 2:
+        templates.append(_make_bin("div",
+            _make_bin("mul", _make_un("square", rv()),
+                _make_un("sin", _make_bin("mul", rc(), rv()))),
+            rv()))
+
+    # Template 14: (1 - exp(c * v1))^2 — Morse potential pattern
+    templates.append(_make_un("square",
+        _make_bin("sub", _make_const(1.0),
+            _make_un("exp", _make_bin("mul", rc(), rv())))))
+
+    # Template 15: 1 / (1 + exp(c * v1)) — logistic/sigmoid
+    templates.append(_make_bin("div", _make_const(1.0),
+        _make_bin("add", _make_const(1.0),
+            _make_un("exp", _make_bin("mul", rc(), rv())))))
+
+    # Template 16: exp(-square(v1) / v2) — Gaussian-like
+    templates.append(_make_un("exp",
+        _make_bin("div",
+            _make_un("neg", _make_un("square", rv())),
+            rv())))
+
+    # Template 17: v1 * (v2 + v3) / (v4 + v5) — Doppler pattern
+    if n >= 3:
+        templates.append(_make_bin("mul", rv(),
+            _make_bin("div",
+                _make_bin("add", rv(), rv()),
+                _make_bin("add", rv(), rv()))))
+
+    # Template 18: square(v1) + square(v2) - c*v1*v2*cos(v3) — cosine rule
+    if n >= 3:
+        templates.append(_make_un("sqrt",
+            _make_bin("sub",
+                _make_bin("add", _make_un("square", rv()), _make_un("square", rv())),
+                _make_bin("mul",
+                    _make_bin("mul", rc(), _make_bin("mul", rv(), rv())),
+                    _make_un("cos", rv())))))
+
+    # Template 19: v1 * cos(sqrt(v2/v3) * v4) — pendulum pattern
+    if n >= 3:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("cos",
+                _make_bin("mul",
+                    _make_un("sqrt", _make_bin("div", rv(), rv())),
+                    rv()))))
+
+    # Template 20: c / v1 — Wien's law pattern
+    templates.append(_make_bin("div", rc(), rv()))
+
+    return templates
+
+
+TEMPLATE_SEED_FRACTION = 0.20  # 20% of population seeded with templates
+
+
 def ramped_half_and_half(rng: np.random.Generator, variables: list[str],
                          pop_size: int, max_depth: int) -> list[Node]:
-    """Initialize population using ramped half-and-half."""
+    """Initialize population using ramped half-and-half with physics template seeding."""
     pop = []
-    for i in range(pop_size):
+
+    # Seed a fraction of the population with physics templates
+    templates = _physics_templates(rng, variables)
+    n_seeded = int(pop_size * TEMPLATE_SEED_FRACTION)
+    for i in range(n_seeded):
+        # Pick a random template (with replacement) and copy it
+        template = templates[i % len(templates)].copy()
+        # Only add if within depth limit
+        if template.depth() <= max_depth:
+            pop.append(template)
+        else:
+            # Fallback to random tree
+            d = 2 + (i % (max_depth - 1))
+            pop.append(random_tree(rng, variables, d, "grow"))
+
+    # Fill rest with standard ramped half-and-half
+    for i in range(len(pop), pop_size):
         d = 2 + (i % (max_depth - 1))  # ramp from depth 2 to max_depth
         method = "grow" if i % 2 == 0 else "full"
         pop.append(random_tree(rng, variables, d, method))
