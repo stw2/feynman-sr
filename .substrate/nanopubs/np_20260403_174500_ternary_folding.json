@@ -2,14 +2,14 @@
   "version": "substrate.nanopub/v0",
   "id": "np_20260403_174500_ternary_folding",
   "assertion": {
-    "title": "Ternary folding of compound binary patterns reduces total nodes 208→196",
+    "title": "Ternary folding of compound binary patterns reduces total nodes 208\u2192196",
     "kind": "result",
     "statement": "Adding 8 new operators that fold binary_op(var, binary_op(var, var)) patterns into ternary/specialized binary operators saves 12 nodes across 10 equations, reducing total nodes from 208 to 196 while maintaining 50/50 exact matches.",
     "claim": "supported",
     "details": {
       "hypothesis": "Many 5-node equations use the pattern binary_compound(var, binary(var, var)) requiring 5 nodes. Folding these into ternary operators (4 nodes) or specialized binary operators (3 nodes) can save 1-2 nodes each.",
       "changes": [
-        "Added mullorentz3(X,Y,Z) = X/sqrt(1-(Y/Z)²) ternary operator",
+        "Added mullorentz3(X,Y,Z) = X/sqrt(1-(Y/Z)\u00b2) ternary operator",
         "Added mulsin3(X,Y,Z) = X*sin(Y*Z) ternary operator",
         "Added mulnegexp3(X,Y,Z) = X*exp(-Y*Z) ternary operator",
         "Added mullj3(X,Y,Z) = X*((Y/Z)^12-(Y/Z)^6) ternary operator",
@@ -30,16 +30,16 @@
           "exact_matches": "50/50"
         },
         "per_equation_savings": {
-          "eq13_compton": "5→4 (div(c,sub(c,v)) → divsub(c,c,v))",
-          "eq20_lens": "5→3 (add(inv(d_o),inv(d_i)) → invsum(d_o,d_i))",
-          "eq26_rel_momentum": "5→4 (mullorentz(m,div(c,v)) → mullorentz3(m,c,v))",
-          "eq30_rel_energy": "5→4 (mullorentz(m,div(v,c)) → mullorentz3(m,v,c))",
-          "eq31_time_dilation": "5→4 (mullorentz(t,div(v,c)) → mullorentz3(t,v,c))",
-          "eq33_shm": "5→4 (mulsin(A,mul(ω,t)) → mulsin3(A,ω,t))",
-          "eq39_radioactive": "5→4 (mulnegexp(N0,mul(λ,t)) → mulnegexp3(N0,λ,t))",
-          "eq44_boltzmann": "5→4 (negexp(divmul(E,kB,T)) → boltzmann3(E,kB,T))",
-          "eq46_lj": "5→4 (mullj(ε,div(σ,r)) → mullj3(ε,σ,r))",
-          "eq50_wien": "5→3 (divexpm1(a,div(a,T)) → planckself(a,T))"
+          "eq13_compton": "5\u21924 (div(c,sub(c,v)) \u2192 divsub(c,c,v))",
+          "eq20_lens": "5\u21923 (add(inv(d_o),inv(d_i)) \u2192 invsum(d_o,d_i))",
+          "eq26_rel_momentum": "5\u21924 (mullorentz(m,div(c,v)) \u2192 mullorentz3(m,c,v))",
+          "eq30_rel_energy": "5\u21924 (mullorentz(m,div(v,c)) \u2192 mullorentz3(m,v,c))",
+          "eq31_time_dilation": "5\u21924 (mullorentz(t,div(v,c)) \u2192 mullorentz3(t,v,c))",
+          "eq33_shm": "5\u21924 (mulsin(A,mul(\u03c9,t)) \u2192 mulsin3(A,\u03c9,t))",
+          "eq39_radioactive": "5\u21924 (mulnegexp(N0,mul(\u03bb,t)) \u2192 mulnegexp3(N0,\u03bb,t))",
+          "eq44_boltzmann": "5\u21924 (negexp(divmul(E,kB,T)) \u2192 boltzmann3(E,kB,T))",
+          "eq46_lj": "5\u21924 (mullj(\u03b5,div(\u03c3,r)) \u2192 mullj3(\u03b5,\u03c3,r))",
+          "eq50_wien": "5\u21923 (divexpm1(a,div(a,T)) \u2192 planckself(a,T))"
         },
         "total_savings": "12 nodes (5.8% reduction)",
         "runtime": "0.3s (unchanged)",
