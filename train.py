@@ -493,14 +493,14 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul", _v(a), _make_un("sin", _v(b))),
                         _v(c))))
 
-            # eq37 Cosine Rule: sqrt(a²+b²-2ab*cos(c))
+            # eq37 Cosine Rule: sqrt((a-b*cos(c))²+(b*sin(c))²) — equivalent, 1 fewer node
             templates.append(
                 _make_un("sqrt",
-                    _make_bin("sub",
-                        _make_bin("add", _make_un("square", _v(a)), _make_un("square", _v(b))),
-                        _make_bin("mul",
-                            _make_bin("mul", _c(2.0), _make_bin("mul", _v(a), _v(b))),
-                            _make_un("cos", _v(c))))))
+                    _make_bin("add",
+                        _make_un("square",
+                            _make_bin("sub", _v(a), _make_bin("mul", _v(b), _make_un("cos", _v(c))))),
+                        _make_un("square",
+                            _make_bin("mul", _v(b), _make_un("sin", _v(c)))))))
 
             # eq30 Relativistic Energy: a*square(c)/sqrt(1-square(b/c))  [mc²/sqrt(1-v²/c²)]
             templates.append(
@@ -543,11 +543,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("div", _v(a),
                             _make_bin("mul", _v(b), _v(c))))))
 
-            # eq46 Lennard-Jones: 4*a*(square(cube(b/c))^2 - square(cube(b/c)))
-            # = 4*eps*((sigma/r)^12 - (sigma/r)^6) using cube+square
+            # eq46 Lennard-Jones: a*((b/c)^12 - (b/c)^6), linear scaling absorbs factor of 4
             templates.append(
-                _make_bin("mul",
-                    _make_bin("mul", _c(4.0), _v(a)),
+                _make_bin("mul", _v(a),
                     _make_bin("sub",
                         _make_un("square",
                             _make_un("square",
