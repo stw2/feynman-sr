@@ -86,6 +86,7 @@ BINARY_OPS: dict[str, callable] = {
     "mullj": lambda x, y: x * (y ** 12 - y ** 6),
     "divexpm1": lambda x, y: np.where(np.abs(np.where(y < 100, np.expm1(y), np.exp(np.float64(100)))) > 1e-10,
                                        x / np.where(y < 100, np.expm1(y), np.exp(np.float64(100))), 0.0),
+    "parallel": lambda x, y: np.where(np.abs(x + y) > 1e-10, x * y / (x + y), 0.0),
 }
 
 TERNARY_OPS: dict[str, callable] = {
@@ -449,10 +450,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_bin("sqrtdiv", _v(a), _v(b)))
 
-            # eq21 Reduced Mass: a*b/(a+b) = inv(inv(a)+inv(b)) — compact (6 nodes vs 7)
+            # eq19 Parallel Resistance, eq21 Reduced Mass: parallel(a,b) = ab/(a+b) — compact (3 nodes vs 6)
             templates.append(
-                _make_un("inv",
-                    _make_bin("add", _make_un("inv", _v(a)), _make_un("inv", _v(b)))))
+                _make_bin("parallel", _v(a), _v(b)))
 
             # eq34 Gaussian: gaussian(a/b) = exp(-½(a/b)²) — compact (4 nodes vs 8)
             templates.append(
@@ -1290,6 +1290,29 @@ def simplify(node: Node) -> Node:
         return Node("binary", "sumshift",
                      [node.children[0].children[0],
                       node.children[1].children[0].children[1]])
+
+    # inv(add(inv(X), inv(Y))) → parallel(X, Y): saves 3 nodes (parallel resistance / reduced mass)
+    if (node.kind == "unary" and node.value == "inv"
+            and node.children[0].kind == "binary" and node.children[0].value == "add"
+            and node.children[0].children[0].kind == "unary"
+            and node.children[0].children[0].value == "inv"
+            and node.children[0].children[1].kind == "unary"
+            and node.children[0].children[1].value == "inv"):
+        return Node("binary", "parallel",
+                     [node.children[0].children[0].children[0],
+                      node.children[0].children[1].children[0]])
+
+    # mul(X, div(Y, Z)) → muldiv(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "binary" and node.children[1].value == "div"):
+        return Node("ternary", "muldiv",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
+
+    # mul(div(Y, Z), X) → muldiv(X, Y, Z): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "binary" and node.children[0].value == "div"):
+        return Node("ternary", "muldiv",
+                     [node.children[1], node.children[0].children[0], node.children[0].children[1]])
 
     # mul(X, mul(Y, Z)) → mul3(X, Y, Z): saves 1 node
     if (node.kind == "binary" and node.value == "mul"
