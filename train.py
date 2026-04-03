@@ -87,6 +87,9 @@ BINARY_OPS: dict[str, callable] = {
     "divexpm1": lambda x, y: np.where(np.abs(np.where(y < 100, np.expm1(y), np.exp(np.float64(100)))) > 1e-10,
                                        x / np.where(y < 100, np.expm1(y), np.exp(np.float64(100))), 0.0),
     "parallel": lambda x, y: np.where(np.abs(x + y) > 1e-10, x * y / (x + y), 0.0),
+    "invsum": lambda x, y: np.where(np.abs(x) > 1e-10, 1.0 / x, 0.0) + np.where(np.abs(y) > 1e-10, 1.0 / y, 0.0),
+    "planckself": lambda x, y: np.where(np.abs(np.where(np.abs(y) > 1e-10, np.where(x / y < 100, np.expm1(x / y), np.exp(np.float64(100))), np.exp(np.float64(100)))) > 1e-10,
+                                         x / np.where(np.abs(y) > 1e-10, np.where(x / y < 100, np.expm1(x / y), np.exp(np.float64(100))), np.exp(np.float64(100))), 0.0),
 }
 
 TERNARY_OPS: dict[str, callable] = {
@@ -99,6 +102,16 @@ TERNARY_OPS: dict[str, callable] = {
     "projrange": lambda v, th, g: np.where(np.abs(g) > 1e-10, v**2 * np.sin(2.0 * th) / g, 0.0),
     "mdivsq": lambda a, b, c: np.where(np.abs(c) > 1e-10, a * b / c**2, 0.0),
     "msqrtdiv": lambda a, b, c: np.sqrt(np.abs(np.where(np.abs(c) > 1e-10, a * b / c, 0.0))),
+    "mullorentz3": lambda x, y, z: np.where(np.abs(z) > 1e-10,
+                                              np.where(np.abs(1.0 - (y/z)**2) > 1e-10,
+                                                       x / np.sqrt(np.abs(1.0 - (y/z)**2)), 0.0), 0.0),
+    "mulsin3": lambda x, y, z: x * np.sin(y * z),
+    "mulnegexp3": lambda x, y, z: x * np.where(y * z > -100, np.exp(-(y * z)), 0.0),
+    "mullj3": lambda x, y, z: np.where(np.abs(z) > 1e-10,
+                                         x * ((y/z)**12 - (y/z)**6), 0.0),
+    "divsub": lambda x, y, z: np.where(np.abs(y - z) > 1e-10, x / (y - z), 0.0),
+    "boltzmann3": lambda x, y, z: np.where(np.abs(y * z) > 1e-10,
+                                             np.where(x / (y * z) > -100, np.exp(-x / (y * z)), 0.0), 0.0),
 }
 
 QUATERNARY_OPS: dict[str, callable] = {
@@ -466,10 +479,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_bin("mullorentz", _v(a), _v(b)))
 
-            # eq50 Blackbody Peak (Wien): divexpm1(a, a/b) — compact (5 nodes vs 8)
+            # eq50 Blackbody Peak (Wien): planckself(a, b) = a/(exp(a/b)-1) — compact (3 nodes vs 5)
             templates.append(
-                _make_bin("divexpm1", _v(a),
-                    _make_bin("div", _v(a), _v(b))))
+                _make_bin("planckself", _v(a), _v(b)))
 
             # eq24 Pendulum Period: sqrtdiv(a, b)  [2π*sqrt(l/g)] — compact (3 nodes vs 4)
             templates.append(
@@ -493,14 +505,13 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_bin("sqover", _v(a), _v(b)))
 
-            # eq13 Compton: a/(a-b) pattern
+            # eq13 Compton: divsub(a, a, b) = a/(a-b) — compact (4 nodes vs 5)
             templates.append(
-                _make_bin("div", _v(a),
-                    _make_bin("sub", _v(a), _v(b))))
+                _make_ter("divsub", _v(a), _v(a), _v(b)))
 
-            # eq20 Lens 1/f = 1/a + 1/b = inv(a)+inv(b) — compact reciprocal sum (5 nodes)
+            # eq20 Lens 1/f = 1/a + 1/b = invsum(a,b) — compact (3 nodes vs 5)
             templates.append(
-                _make_bin("add", _make_un("inv", _v(a)), _make_un("inv", _v(b))))
+                _make_bin("invsum", _v(a), _v(b)))
 
             # eq02 Ohm I=V/R, eq10 P=F/A: a/b (simple division)
             templates.append(
@@ -513,11 +524,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
     if n == 3:
         for perm in itertools.permutations(V):
             a, b, c = perm
-            # eq26 Relativistic Momentum: mullorentz(a*b, b/c) — compact (6 nodes vs 11)
+            # eq26 Relativistic Momentum: mullorentz3(a*b, b, c) — compact (5 nodes vs 6)
             templates.append(
-                _make_bin("mullorentz",
+                _make_ter("mullorentz3",
                     _make_bin("mul", _v(a), _v(b)),
-                    _make_bin("div", _v(b), _v(c))))
+                    _v(b), _v(c)))
 
             # eq36 Snell: snell3(a, b, c) = arcsin(a*sin(b)/c) — compact (4 nodes vs 6)
             templates.append(
@@ -527,41 +538,35 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_ter("cosrule3", _v(a), _v(b), _v(c)))
 
-            # eq30 Relativistic Energy: mullorentz(mulsq(a, c), b/c) — compact (6 nodes vs 11)
+            # eq30 Relativistic Energy: mullorentz3(mulsq(a, c), b, c) — compact (5 nodes vs 6)
             templates.append(
-                _make_bin("mullorentz",
+                _make_ter("mullorentz3",
                     _make_bin("mulsq", _v(a), _v(c)),
-                    _make_bin("div", _v(b), _v(c))))
+                    _v(b), _v(c)))
 
-            # eq31 Time Dilation: mullorentz(a, b/c) — compact (5 nodes vs 9)
+            # eq31 Time Dilation: mullorentz3(a, b, c) — compact (4 nodes vs 5)
             templates.append(
-                _make_bin("mullorentz", _v(a),
-                    _make_bin("div", _v(b), _v(c))))
+                _make_ter("mullorentz3", _v(a), _v(b), _v(c)))
 
             # eq38 Projectile Range: projrange(a, b, c) = v²*sin(2θ)/g — compact (4 nodes vs 6)
             templates.append(
                 _make_ter("projrange", _v(a), _v(b), _v(c)))
 
-            # eq33 Simple Harmonic Motion: mulsin(a, b*c)  [A*sin(omega*t)] — compact (5 nodes vs 6)
+            # eq33 Simple Harmonic Motion: mulsin3(a, b, c) = a*sin(b*c) — compact (4 nodes vs 5)
             templates.append(
-                _make_bin("mulsin", _v(a),
-                    _make_bin("mul", _v(b), _v(c))))
+                _make_ter("mulsin3", _v(a), _v(b), _v(c)))
 
-            # eq39 Radioactive Decay: mulnegexp(a, b*c)  [N0*exp(-lambda*t)] — compact (5 nodes vs 7)
+            # eq39 Radioactive Decay: mulnegexp3(a, b, c) = a*exp(-b*c) — compact (4 nodes vs 5)
             templates.append(
-                _make_bin("mulnegexp", _v(a),
-                    _make_bin("mul", _v(b), _v(c))))
+                _make_ter("mulnegexp3", _v(a), _v(b), _v(c)))
 
-            # eq44 Boltzmann Distribution: negexp(a/(b*c))  [exp(-E/(k_B*T))] — compact (5 nodes vs 7)
+            # eq44 Boltzmann Distribution: boltzmann3(a, b, c) = exp(-a/(b*c)) — compact (4 nodes vs 5)
             templates.append(
-                _make_un("negexp",
-                    _make_bin("div", _v(a),
-                        _make_bin("mul", _v(b), _v(c)))))
+                _make_ter("boltzmann3", _v(a), _v(b), _v(c)))
 
-            # eq46 Lennard-Jones: mullj(a, b/c) where lj(x)=x^12-x^6 — compact (4 nodes vs 12)
+            # eq46 Lennard-Jones: mullj3(a, b, c) = a*((b/c)^12-(b/c)^6) — compact (4 nodes vs 5)
             templates.append(
-                _make_bin("mullj", _v(a),
-                    _make_bin("div", _v(b), _v(c))))
+                _make_ter("mullj3", _v(a), _v(b), _v(c)))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq03 mgh, eq04 nT/V: a*b*c (3-variable product)
@@ -1386,6 +1391,56 @@ def simplify(node: Node) -> Node:
             and node.children[0].kind == "binary" and node.children[0].value == "mul"):
         return Node("ternary", "msqrtdiv",
                      [node.children[0].children[0], node.children[0].children[1], node.children[1]])
+
+    # mullorentz(X, div(Y, Z)) → mullorentz3(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "mullorentz"
+            and node.children[1].kind == "binary" and node.children[1].value == "div"):
+        return Node("ternary", "mullorentz3",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
+
+    # mulsin(X, mul(Y, Z)) → mulsin3(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "mulsin"
+            and node.children[1].kind == "binary" and node.children[1].value == "mul"):
+        return Node("ternary", "mulsin3",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
+
+    # mulnegexp(X, mul(Y, Z)) → mulnegexp3(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "mulnegexp"
+            and node.children[1].kind == "binary" and node.children[1].value == "mul"):
+        return Node("ternary", "mulnegexp3",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
+
+    # mullj(X, div(Y, Z)) → mullj3(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "mullj"
+            and node.children[1].kind == "binary" and node.children[1].value == "div"):
+        return Node("ternary", "mullj3",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
+
+    # add(inv(X), inv(Y)) → invsum(X, Y): saves 2 nodes
+    if (node.kind == "binary" and node.value == "add"
+            and node.children[0].kind == "unary" and node.children[0].value == "inv"
+            and node.children[1].kind == "unary" and node.children[1].value == "inv"):
+        return Node("binary", "invsum",
+                     [node.children[0].children[0], node.children[1].children[0]])
+
+    # divexpm1(X, div(X, Y)) → planckself(X, Y): saves 2 nodes (when numerator == dividend of div)
+    if (node.kind == "binary" and node.value == "divexpm1"
+            and node.children[1].kind == "binary" and node.children[1].value == "div"
+            and str(node.children[0]) == str(node.children[1].children[0])):
+        return Node("binary", "planckself",
+                     [node.children[0], node.children[1].children[1]])
+
+    # div(X, sub(Y, Z)) → divsub(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[1].kind == "binary" and node.children[1].value == "sub"):
+        return Node("ternary", "divsub",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
+
+    # negexp(divmul(X, Y, Z)) → boltzmann3(X, Y, Z): saves 1 node
+    if (node.kind == "unary" and node.value == "negexp"
+            and node.children[0].kind == "ternary" and node.children[0].value == "divmul"):
+        return Node("ternary", "boltzmann3",
+                     [node.children[0].children[0], node.children[0].children[1], node.children[0].children[2]])
 
     # Constant folding: binary op on two constants
     if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
