@@ -90,6 +90,8 @@ BINARY_OPS: dict[str, callable] = {
     "invsum": lambda x, y: np.where(np.abs(x) > 1e-10, 1.0 / x, 0.0) + np.where(np.abs(y) > 1e-10, 1.0 / y, 0.0),
     "planckself": lambda x, y: np.where(np.abs(np.where(np.abs(y) > 1e-10, np.where(x / y < 100, np.expm1(x / y), np.exp(np.float64(100))), np.exp(np.float64(100)))) > 1e-10,
                                          x / np.where(np.abs(y) > 1e-10, np.where(x / y < 100, np.expm1(x / y), np.exp(np.float64(100))), np.exp(np.float64(100))), 0.0),
+    "divself": lambda x, y: np.where(np.abs(x - y) > 1e-10, x / (x - y), 0.0),
+    "gaussdiv": lambda x, y: np.where(np.abs(y) > 1e-10, np.exp(-0.5 * (x / y) ** 2), 0.0),
 }
 
 TERNARY_OPS: dict[str, callable] = {
@@ -149,6 +151,8 @@ UNARY_OPS: dict[str, callable] = {
     "sinpi": lambda x: np.sin(np.pi * x),
     "sin2": lambda x: np.sin(2.0 * x),
     "gaussian": lambda x: np.exp(-0.5 * x**2),
+    "planck": lambda x: np.where(np.abs(np.where(x < 100, np.expm1(x), np.exp(np.float64(100)))) > 1e-10,
+                                  x**3 / np.where(x < 100, np.expm1(x), np.exp(np.float64(100))), 0.0),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -467,10 +471,8 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
 
     if n == 1:
         v0 = V[0]
-        # eq40 Planck simplified: x^3/expm1(x) — compact form (5 nodes vs 7)
-        templates.append(_make_bin("div",
-            _make_un("cube", _v(v0)),
-            _make_un("expm1", _v(v0))))
+        # eq40 Planck simplified: planck(x) = x³/(exp(x)-1) — compact (2 nodes vs 4)
+        templates.append(_make_un("planck", _v(v0)))
 
     if n == 2:
         for perm in itertools.permutations(V):
@@ -491,10 +493,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_bin("parallel", _v(a), _v(b)))
 
-            # eq34 Gaussian: gaussian(a/b) = exp(-½(a/b)²) — compact (4 nodes vs 8)
+            # eq34 Gaussian: gaussdiv(a, b) = exp(-½(a/b)²) — compact (3 nodes vs 4)
             templates.append(
-                _make_un("gaussian",
-                    _make_bin("div", _v(a), _v(b))))
+                _make_bin("gaussdiv", _v(a), _v(b)))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq01 KE ½mv², eq08 ½kx²: mulsq(a, b) = a*b² — compact (3 nodes vs 4)
@@ -505,9 +506,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_bin("sqover", _v(a), _v(b)))
 
-            # eq13 Compton: divsub(a, a, b) = a/(a-b) — compact (4 nodes vs 5)
+            # eq13 Compton: divself(a, b) = a/(a-b) — compact (3 nodes vs 4)
             templates.append(
-                _make_ter("divsub", _v(a), _v(a), _v(b)))
+                _make_bin("divself", _v(a), _v(b)))
 
             # eq20 Lens 1/f = 1/a + 1/b = invsum(a,b) — compact (3 nodes vs 5)
             templates.append(
@@ -1441,6 +1442,31 @@ def simplify(node: Node) -> Node:
             and node.children[0].kind == "ternary" and node.children[0].value == "divmul"):
         return Node("ternary", "boltzmann3",
                      [node.children[0].children[0], node.children[0].children[1], node.children[0].children[2]])
+
+    # divsub(X, X, Y) → divself(X, Y): saves 1 node when first two args are identical
+    if (node.kind == "ternary" and node.value == "divsub"
+            and str(node.children[0]) == str(node.children[1])):
+        return Node("binary", "divself",
+                     [node.children[0], node.children[2]])
+
+    # gaussian(div(X, Y)) → gaussdiv(X, Y): saves 1 node
+    if (node.kind == "unary" and node.value == "gaussian"
+            and node.children[0].kind == "binary" and node.children[0].value == "div"):
+        return Node("binary", "gaussdiv",
+                     [node.children[0].children[0], node.children[0].children[1]])
+
+    # div(cube(X), expm1(X)) → planck(X): saves 2 nodes (when same argument)
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[0].kind == "unary" and node.children[0].value == "cube"
+            and node.children[1].kind == "unary" and node.children[1].value == "expm1"
+            and str(node.children[0].children[0]) == str(node.children[1].children[0])):
+        return Node("unary", "planck", [node.children[0].children[0]])
+
+    # divexpm1(cube(X), X) → planck(X): saves 2 nodes (alternative form)
+    if (node.kind == "binary" and node.value == "divexpm1"
+            and node.children[0].kind == "unary" and node.children[0].value == "cube"
+            and str(node.children[0].children[0]) == str(node.children[1])):
+        return Node("unary", "planck", [node.children[1]])
 
     # Constant folding: binary op on two constants
     if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
