@@ -28,8 +28,15 @@
         "exact_match_total": 50,
         "baseline_exact": 30,
         "baseline_mean_r2": 0.976,
-        "equations_gained": ["eq13", "eq18", "eq26", "eq30"],
-        "equations_lost": ["eq45"],
+        "equations_gained": [
+          "eq13",
+          "eq18",
+          "eq26",
+          "eq30"
+        ],
+        "equations_lost": [
+          "eq45"
+        ],
         "tier1_exact": "10/10",
         "tier2_exact": "12/12",
         "tier3_exact": "9/10",
@@ -43,7 +50,9 @@
   "substrate": {
     "room": "c079cfc6-fdb3-4ea4-9917-bac3c90145a7",
     "links": {
-      "supports": ["np_20260403_014345_multi_restart"],
+      "supports": [
+        "np_20260403_014345_multi_restart"
+      ],
       "attacks": []
     }
   }
