@@ -71,6 +71,9 @@ BINARY_OPS: dict[str, callable] = {
     "sumshift": lambda x, y: np.sin(x) + np.sin(x + y),
     "damposc": lambda x, y: np.where(x < 100, np.exp(-x), 0.0) * np.cos(y),
     "cosrule": lambda x, y: np.sqrt(np.abs(1.0 + x**2 - 2.0 * x * np.cos(y))),
+    "mulsq": lambda x, y: x * y**2,
+    "sqover": lambda x, y: x**2 / np.where(np.abs(y) > 1e-10, y, 1e-10),
+    "divsq": lambda x, y: np.where(np.abs(y) > 1e-10, x / y**2, 0.0),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -247,12 +250,11 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     templates.append(_make_bin("div", _make_const(1.0),
         _make_un("expm1", rv())))
 
-    # Template 13: v1^2 * sin(c * v2) / v3 — projectile range pattern
+    # Template 13: sqover(v1, v3) * sin(c * v2) — projectile range pattern (compact)
     if n >= 2:
-        templates.append(_make_bin("div",
-            _make_bin("mul", _make_un("square", rv()),
-                _make_un("sin", _make_bin("mul", rc(), rv()))),
-            rv()))
+        templates.append(_make_bin("mul",
+            _make_bin("sqover", rv(), rv()),
+            _make_un("sin", _make_bin("mul", rc(), rv()))))
 
     # Template 14: (1 - exp(c * v1))^2 — Morse potential pattern
     templates.append(_make_un("square",
@@ -262,11 +264,9 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     # Template 15: sigmoid(c * v1) — logistic/sigmoid (compact)
     templates.append(_make_un("sigmoid", _make_bin("mul", rc(), rv())))
 
-    # Template 16: negexp(square(v1) / v2) — Gaussian-like (compact)
+    # Template 16: negexp(sqover(v1, v2)) — Gaussian-like (compact)
     templates.append(_make_un("negexp",
-        _make_bin("div",
-            _make_un("square", rv()),
-            rv())))
+        _make_bin("sqover", rv(), rv())))
 
     # Template 17: v1 * (v2 + v3) / (v4 + v5) — Doppler pattern
     if n >= 3:
@@ -345,8 +345,7 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     # Template 28: negexp(square(v1) / (c * square(v2))) — Gaussian (compact)
     if n >= 1:
         templates.append(_make_un("negexp",
-            _make_bin("div",
-                _make_un("square", rv()),
+            _make_bin("sqover", rv(),
                 _make_bin("mul", rc(), _make_un("square", rv())))))
 
     # Template 29: v1*morse(v2*(v3-v4)) — Morse potential (compact)
@@ -439,13 +438,13 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                             _make_bin("div", _v(a), _v(b))))))
 
             # --- Algebraic templates for tier 1-2 ---
-            # eq01 KE ½mv², eq08 ½kx², eq14 v²/r, eq17 q²/C: a*square(b)
+            # eq01 KE ½mv², eq08 ½kx²: mulsq(a, b) = a*b² — compact (3 nodes vs 4)
             templates.append(
-                _make_bin("mul", _v(a), _make_un("square", _v(b))))
+                _make_bin("mulsq", _v(a), _v(b)))
 
-            # eq14 v²/r, eq17 q²/C: square(a)/b
+            # eq14 v²/r, eq17 q²/C: sqover(a, b) = a²/b — compact (3 nodes vs 4)
             templates.append(
-                _make_bin("div", _make_un("square", _v(a)), _v(b)))
+                _make_bin("sqover", _v(a), _v(b)))
 
             # eq13 Compton: a/(a-b) pattern
             templates.append(
@@ -485,10 +484,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("mul", _v(b),
                     _make_bin("cosrule", _make_bin("div", _v(a), _v(b)), _v(c))))
 
-            # eq30 Relativistic Energy: a*square(c)*lorentz(b/c) — compact (8 nodes vs 11)
+            # eq30 Relativistic Energy: mulsq(a, c)*lorentz(b/c) — compact (7 nodes vs 11)
             templates.append(
                 _make_bin("mul",
-                    _make_bin("mul", _v(a), _make_un("square", _v(c))),
+                    _make_bin("mulsq", _v(a), _v(c)),
                     _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
 
             # eq31 Time Dilation: a*lorentz(b/c) — compact (6 nodes vs 9)
@@ -496,13 +495,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("mul", _v(a),
                     _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
 
-            # eq38 Projectile Range: square(a)*sin(c*b)/c  [v²sin(2θ)/g]
+            # eq38 Projectile Range: sqover(a, c)*sin(2*b)  [v²*sin(2θ)/g] — compact (8 nodes vs 9)
             templates.append(
-                _make_bin("div",
-                    _make_bin("mul",
-                        _make_un("square", _v(a)),
-                        _make_un("sin", _make_bin("mul", _c(2.0), _v(b)))),
-                    _v(c)))
+                _make_bin("mul",
+                    _make_bin("sqover", _v(a), _v(c)),
+                    _make_un("sin", _make_bin("mul", _c(2.0), _v(b)))))
 
             # eq33 Simple Harmonic Motion: a*sin(b*c)  [A*sin(omega*t)]
             templates.append(
@@ -530,11 +527,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))))
 
-            # eq11 Coulomb q1*q2/r², eq12 Newton m1*m2/r²: a*b/square(c)
+            # eq11 Coulomb q1*q2/r², eq12 Newton m1*m2/r²: divsq(a*b, c) — compact (5 nodes vs 6)
             templates.append(
-                _make_bin("div",
+                _make_bin("divsq",
                     _make_bin("mul", _v(a), _v(b)),
-                    _make_un("square", _v(c))))
+                    _v(c)))
 
             # eq04 Ideal Gas nT/V, eq16 Gm/r: a*b/c
             templates.append(
@@ -644,11 +641,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))),
                     _make_un("sin", _v(d))))
 
-            # eq22 Drag ½*Cd*rho*A*v²: a*b*c*square(d)
+            # eq22 Drag ½*Cd*rho*A*v²: mulsq(a*b*c, d) — compact (7 nodes vs 8)
             templates.append(
-                _make_bin("mul",
+                _make_bin("mulsq",
                     _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))),
-                    _make_un("square", _v(d))))
+                    _v(d)))
 
     return templates
 
@@ -1109,6 +1106,30 @@ def simplify(node: Node) -> Node:
             return Node("unary", "sinpi", [right])
         if right.kind == "const" and abs(right.value - np.pi) < 1e-6:
             return Node("unary", "sinpi", [left])
+
+    # mul(X, square(Y)) → mulsq(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "square"):
+        return Node("binary", "mulsq",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(square(Y), X) → mulsq(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "square"):
+        return Node("binary", "mulsq",
+                     [node.children[1], node.children[0].children[0]])
+
+    # div(square(X), Y) → sqover(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[0].kind == "unary" and node.children[0].value == "square"):
+        return Node("binary", "sqover",
+                     [node.children[0].children[0], node.children[1]])
+
+    # div(X, square(Y)) → divsq(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[1].kind == "unary" and node.children[1].value == "square"):
+        return Node("binary", "divsq",
+                     [node.children[0], node.children[1].children[0]])
 
     # add(sin(x), sin(add(x, y))) → sumshift(x, y): saves 6 nodes (wave superposition)
     if (node.kind == "binary" and node.value == "add"
