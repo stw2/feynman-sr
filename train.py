@@ -83,6 +83,8 @@ UNARY_OPS: dict[str, callable] = {
     "inv": lambda x: np.where(np.abs(x) > 1e-10, 1.0 / x, 0.0),
     "expm1": lambda x: np.where(x < 100, np.expm1(x), np.exp(np.float64(100))),
     "sigmoid": lambda x: 1.0 / (1.0 + np.exp(-np.clip(x, -100, 100))),
+    "lorentz": lambda x: np.where(np.abs(1.0 - x**2) > 1e-10,
+                                   1.0 / np.sqrt(np.abs(1.0 - x**2)), 0.0),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -196,22 +198,18 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     templates.append(_make_un("sqrt", _make_bin("div",
         _make_bin("mul", rc(), rv()), rv())))
 
-    # Template 5: v1 / sqrt(1 - square(v2/v3)) — relativistic gamma factor
+    # Template 5: v1 * lorentz(v2/v3) — relativistic gamma factor (compact)
     if n >= 2:
         templates.append(
-            _make_bin("div", rv(),
-                _make_un("sqrt",
-                    _make_bin("sub", _make_const(1.0),
-                        _make_un("square", _make_bin("div", rv(), rv()))))))
+            _make_bin("mul", rv(),
+                _make_un("lorentz", _make_bin("div", rv(), rv()))))
 
-    # Template 6: v1 * v2 / sqrt(1 - square(v2/v3)) — relativistic momentum
+    # Template 6: v1 * v2 * lorentz(v2/v3) — relativistic momentum (compact)
     if n >= 2:
         templates.append(
-            _make_bin("div",
+            _make_bin("mul",
                 _make_bin("mul", rv(), rv()),
-                _make_un("sqrt",
-                    _make_bin("sub", _make_const(1.0),
-                        _make_un("square", _make_bin("div", rv(), rv()))))))
+                _make_un("lorentz", _make_bin("div", rv(), rv()))))
 
     # Template 7: exp(c * v1) — exponential growth/decay
     templates.append(_make_un("exp", _make_bin("mul", rc(), rv())))
@@ -411,11 +409,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
     if n == 2:
         for perm in itertools.permutations(V):
             a, b = perm
-            # eq23 Relativistic Mass: a/sqrt(1-square(b))  [m/sqrt(1-v²)]
+            # eq23 Relativistic Mass: a*lorentz(b)  [m/sqrt(1-v²)] — compact (4 nodes vs 7)
             templates.append(
-                _make_bin("div", _v(a),
-                    _make_un("sqrt",
-                        _make_bin("sub", _c(1.0), _make_un("square", _v(b))))))
+                _make_bin("mul", _v(a), _make_un("lorentz", _v(b))))
 
             # eq50 Blackbody Peak (Wien): a/expm1(a/b) — compact (6 nodes vs 8)
             templates.append(
@@ -468,13 +464,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
     if n == 3:
         for perm in itertools.permutations(V):
             a, b, c = perm
-            # eq26 Relativistic Momentum: a*b/sqrt(1-b^2/c^2)  [m*v/sqrt(1-v²/c²)]
+            # eq26 Relativistic Momentum: a*b*lorentz(b/c) — compact (7 nodes vs 11)
             templates.append(
-                _make_bin("div",
+                _make_bin("mul",
                     _make_bin("mul", _v(a), _v(b)),
-                    _make_un("sqrt",
-                        _make_bin("sub", _c(1.0),
-                            _make_un("square", _make_bin("div", _v(b), _v(c)))))))
+                    _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
 
             # eq36 Snell: arcsin(a*sin(b)/c)
             templates.append(
@@ -489,20 +483,16 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_bin("sub", _v(a), _make_bin("mul", _v(b), _make_un("cos", _v(c)))),
                     _make_bin("mul", _v(b), _make_un("sin", _v(c)))))
 
-            # eq30 Relativistic Energy: a*square(c)/sqrt(1-square(b/c))  [mc²/sqrt(1-v²/c²)]
+            # eq30 Relativistic Energy: a*square(c)*lorentz(b/c) — compact (8 nodes vs 11)
             templates.append(
-                _make_bin("div",
+                _make_bin("mul",
                     _make_bin("mul", _v(a), _make_un("square", _v(c))),
-                    _make_un("sqrt",
-                        _make_bin("sub", _c(1.0),
-                            _make_un("square", _make_bin("div", _v(b), _v(c)))))))
+                    _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
 
-            # eq31 Time Dilation: a/sqrt(1-square(b/c))  [t/sqrt(1-v²/c²)]
+            # eq31 Time Dilation: a*lorentz(b/c) — compact (6 nodes vs 9)
             templates.append(
-                _make_bin("div", _v(a),
-                    _make_un("sqrt",
-                        _make_bin("sub", _c(1.0),
-                            _make_un("square", _make_bin("div", _v(b), _v(c)))))))
+                _make_bin("mul", _v(a),
+                    _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
 
             # eq38 Projectile Range: square(a)*sin(c*b)/c  [v²sin(2θ)/g]
             templates.append(
@@ -992,6 +982,19 @@ def simplify(node: Node) -> Node:
     if node.kind == "binary" and node.value == "div":
         if node.children[1].kind == "const" and node.children[1].value == 1.0:
             return node.children[0]
+
+    # div(X, sqrt(sub(1, square(Y)))) → mul(X, lorentz(Y)): saves 3 nodes
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[1].kind == "unary" and node.children[1].value == "sqrt"
+            and node.children[1].children[0].kind == "binary"
+            and node.children[1].children[0].value == "sub"
+            and node.children[1].children[0].children[0].kind == "const"
+            and node.children[1].children[0].children[0].value == 1.0
+            and node.children[1].children[0].children[1].kind == "unary"
+            and node.children[1].children[0].children[1].value == "square"):
+        Y = node.children[1].children[0].children[1].children[0]
+        return Node("binary", "mul",
+                     [node.children[0], Node("unary", "lorentz", [Y])])
 
     # div(f(x), f(y)) → f(div(x, y)) for square/cube: saves 2 nodes
     if (node.kind == "binary" and node.value == "div"
