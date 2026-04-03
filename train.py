@@ -69,6 +69,7 @@ BINARY_OPS: dict[str, callable] = {
     "div": lambda x, y: np.where(np.abs(y) > 1e-10, x / y, 0.0),
     "hypot": lambda x, y: np.sqrt(x**2 + y**2),
     "sumshift": lambda x, y: np.sin(x) + np.sin(x + y),
+    "damposc": lambda x, y: np.where(x < 100, np.exp(-x), 0.0) * np.cos(y),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -89,6 +90,7 @@ UNARY_OPS: dict[str, callable] = {
     "negexp": lambda x: np.where(x > -100, np.exp(-x), 0.0),
     "pow6": lambda x: x ** 6,
     "lj": lambda x: x ** 12 - x ** 6,
+    "morse": lambda x: (1.0 - np.where(x > -100, np.exp(-x), 0.0)) ** 2,
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -350,7 +352,21 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_un("square", rv()),
                 _make_bin("mul", rc(), _make_un("square", rv())))))
 
-    # Template 29: v1*sumshift(v2*v3, v4) — wave superposition (compact)
+    # Template 29: v1*morse(v2*(v3-v4)) — Morse potential (compact)
+    if n >= 3:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("morse",
+                _make_bin("mul", rv(),
+                    _make_bin("sub", rv(), rv())))))
+
+    # Template 30a: v1*damposc(v2*v3, v4*v3) — damped oscillation (compact)
+    if n >= 3:
+        templates.append(_make_bin("mul", rv(),
+            _make_bin("damposc",
+                _make_bin("mul", rv(), rv()),
+                _make_bin("mul", rv(), rv()))))
+
+    # Template 29b: v1*sumshift(v2*v3, v4) — wave superposition (compact)
     if n >= 3:
         templates.append(_make_bin("mul", rv(),
             _make_bin("sumshift", _make_bin("mul", rv(), rv()), rv())))
@@ -602,6 +618,20 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_un("negexp",
                         _make_bin("div", _v(b),
                             _make_bin("mul", _v(c), _v(d))))))
+
+            # eq48 Morse: a*morse(b*(c-d)) where morse(x)=(1-exp(-x))^2 — compact (8 nodes vs 11)
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_un("morse",
+                        _make_bin("mul", _v(b),
+                            _make_bin("sub", _v(c), _v(d))))))
+
+            # eq35 Damped Oscillation: a*damposc(b*d, c*d) where damposc(x,y)=exp(-x)*cos(y) — compact (9 nodes vs 11)
+            templates.append(
+                _make_bin("mul", _v(a),
+                    _make_bin("damposc",
+                        _make_bin("mul", _v(b), _v(d)),
+                        _make_bin("mul", _v(c), _v(d)))))
 
             # eq45 Standing Wave: a*sin(b*pi*c/d)
             templates.append(
@@ -1031,6 +1061,29 @@ def simplify(node: Node) -> Node:
             and node.children[1].kind == "unary" and node.children[1].value == "pow6"
             and str(node.children[0].children[0].children[0]) == str(node.children[1].children[0])):
         return Node("unary", "lj", [node.children[1].children[0]])
+
+    # square(sub(1, negexp(x))) → morse(x): saves 3 nodes (Morse potential)
+    if (node.kind == "unary" and node.value == "square"
+            and node.children[0].kind == "binary" and node.children[0].value == "sub"
+            and node.children[0].children[0].kind == "const"
+            and node.children[0].children[0].value == 1.0
+            and node.children[0].children[1].kind == "unary"
+            and node.children[0].children[1].value == "negexp"):
+        return Node("unary", "morse", [node.children[0].children[1].children[0]])
+
+    # mul(negexp(x), cos(y)) → damposc(x, y): saves 2 nodes (damped oscillation)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "negexp"
+            and node.children[1].kind == "unary" and node.children[1].value == "cos"):
+        return Node("binary", "damposc",
+                     [node.children[0].children[0], node.children[1].children[0]])
+
+    # mul(cos(y), negexp(x)) → damposc(x, y): saves 2 nodes (commuted form)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "cos"
+            and node.children[1].kind == "unary" and node.children[1].value == "negexp"):
+        return Node("binary", "damposc",
+                     [node.children[1].children[0], node.children[0].children[0]])
 
     # add(sin(x), sin(add(x, y))) → sumshift(x, y): saves 6 nodes (wave superposition)
     if (node.kind == "binary" and node.value == "add"
