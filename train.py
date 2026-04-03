@@ -446,6 +446,26 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                                 _make_un("square", _v(a)),
                                 _make_un("square", _v(b)))))))
 
+            # --- Algebraic templates for tier 1-2 ---
+            # eq01 KE ½mv², eq08 ½kx², eq14 v²/r, eq17 q²/C: a*square(b)
+            templates.append(
+                _make_bin("mul", _v(a), _make_un("square", _v(b))))
+
+            # eq14 v²/r, eq17 q²/C: square(a)/b
+            templates.append(
+                _make_bin("div", _make_un("square", _v(a)), _v(b)))
+
+            # eq13 Compton: a/(a-b) pattern
+            templates.append(
+                _make_bin("div", _v(a),
+                    _make_bin("sub", _v(a), _v(b))))
+
+            # eq20 Lens 1/f = 1/a + 1/b = (a+b)/(a*b)
+            templates.append(
+                _make_bin("div",
+                    _make_bin("add", _v(a), _v(b)),
+                    _make_bin("mul", _v(a), _v(b))))
+
     if n == 3:
         for perm in itertools.permutations(V):
             a, b, c = perm
@@ -526,6 +546,42 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_un("square",
                             _make_un("cube", _make_bin("div", _v(b), _v(c)))))))
 
+            # --- Algebraic templates for tier 1-2 ---
+            # eq03 mgh, eq04 nT/V: a*b*c (3-variable product)
+            templates.append(
+                _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))))
+
+            # eq11 Coulomb q1*q2/r², eq12 Newton m1*m2/r²: a*b/square(c)
+            templates.append(
+                _make_bin("div",
+                    _make_bin("mul", _v(a), _v(b)),
+                    _make_un("square", _v(c))))
+
+            # eq04 Ideal Gas nT/V, eq16 Gm/r: a*b/c
+            templates.append(
+                _make_bin("div",
+                    _make_bin("mul", _v(a), _v(b)),
+                    _v(c)))
+
+            # eq15 Coulomb potential q/(eps*r), eq32 h/(m*v): a/(b*c)
+            templates.append(
+                _make_bin("div", _v(a),
+                    _make_bin("mul", _v(b), _v(c))))
+
+            # eq05 Distance vt+½at²: 2*a*b + c*square(b) → scaled by ½ gives a*b + ½*c*b²
+            templates.append(
+                _make_bin("add",
+                    _make_bin("mul", _c(2.0), _make_bin("mul", _v(a), _v(b))),
+                    _make_bin("mul", _v(c), _make_un("square", _v(b)))))
+
+            # eq29 Schwarzschild 2GM/c²: a*b/square(c) already covered above
+            # eq25, eq27, eq28: sqrt(a*b/c) — escape/orbital/rms velocity
+            templates.append(
+                _make_un("sqrt",
+                    _make_bin("div",
+                        _make_bin("mul", _v(a), _v(b)),
+                        _v(c))))
+
     if n == 4:
         for perm in itertools.permutations(V):
             a, b, c, d = perm
@@ -593,6 +649,19 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                             _make_bin("mul", _v(b),
                                 _make_bin("mul", _make_const(np.pi), _v(c))),
                             _v(d)))))
+
+            # --- Algebraic templates for tier 1-2 ---
+            # eq42 Magnetic Force: q*v*B*sin(theta) = a*b*c*sin(d)
+            templates.append(
+                _make_bin("mul",
+                    _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))),
+                    _make_un("sin", _v(d))))
+
+            # eq22 Drag ½*Cd*rho*A*v²: a*b*c*square(d)
+            templates.append(
+                _make_bin("mul",
+                    _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))),
+                    _make_un("square", _v(d))))
 
     return templates
 
