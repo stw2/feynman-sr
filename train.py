@@ -1047,9 +1047,12 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
     start = time.time()
 
     # Fast path: evaluate permutation templates first before building full population.
-    # If an exact match is found, return immediately — avoids generating and evaluating
-    # hundreds of random trees.
+    # If an exact match is found, return the smallest matching template — avoids
+    # generating and evaluating hundreds of random trees while minimizing node count.
     perm_templates = _permutation_templates(rng, variables)
+    best_template = None
+    best_template_size = float('inf')
+    best_template_mse = float('inf')
     for t in perm_templates:
         if t.depth() > MAX_OFFSPRING_DEPTH:
             continue
@@ -1060,12 +1063,17 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
             y_scaled = a * y_pred + b
             mse = float(np.mean((y_train - y_scaled) ** 2))
             if np.isfinite(mse) and mse < 1e-8:
-                # Near-perfect fit — likely exact match, return immediately
-                print(f"  template fast-path: exact match found, skipping GP")
                 simplified = simplify(t.copy())
-                return simplified, [-(mse + PARSIMONY_COEFF * simplified.size())]
+                sz = simplified.size()
+                if sz < best_template_size or (sz == best_template_size and mse < best_template_mse):
+                    best_template = simplified
+                    best_template_size = sz
+                    best_template_mse = mse
         except Exception:
             continue
+    if best_template is not None:
+        print(f"  template fast-path: exact match found ({best_template_size} nodes), skipping GP")
+        return best_template, [-(best_template_mse + PARSIMONY_COEFF * best_template_size)]
 
     # Initialize full population (templates already generated, reuse them)
     population = ramped_half_and_half(rng, variables, POPULATION_SIZE, MAX_DEPTH)
