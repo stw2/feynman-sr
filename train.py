@@ -940,6 +940,14 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
 
         history.append(best_fitness)
 
+        # Early stopping: if MSE is essentially zero, the solution is found
+        # fitness = -mse - parsimony_coeff * size, so mse = -(fitness + parsimony_coeff * size)
+        if best_ever is not None:
+            implied_mse = -(best_fitness + PARSIMONY_COEFF * best_ever.size())
+            if implied_mse < 1e-8:
+                print(f"  early stop at gen {gen}: implied_mse={implied_mse:.2e} (solution found)")
+                break
+
         if gen % 10 == 0:
             print(f"  gen {gen:>3}: best_fitness={best_fitness:.6f}  "
                   f"best_size={best_ever.size() if best_ever else 0}  "
