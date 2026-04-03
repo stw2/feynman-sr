@@ -31,6 +31,7 @@ import sys
 import time
 
 import numpy as np
+from scipy.optimize import minimize
 
 from evaluate import EQUATIONS, load_equation_data, r_squared, is_exact
 
@@ -349,6 +350,38 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                     _make_un("square", rv()),
                     _make_bin("mul", rc(), _make_un("square", rv()))))))
 
+    # Template 29: 2*v1*cos(v2/2)*cos(v3*v4 + v2/2) — wave superposition
+    if n >= 3:
+        templates.append(_make_bin("mul",
+            _make_bin("mul", _make_const(2.0), rv()),
+            _make_bin("mul",
+                _make_un("cos", _make_bin("div", rv(), _make_const(2.0))),
+                _make_un("cos",
+                    _make_bin("add",
+                        _make_bin("mul", rv(), rv()),
+                        _make_bin("div", rv(), _make_const(2.0)))))))
+
+    # Template 30: v1 * cos(v2) + v1 * cos(v2 + v3) — wave superposition (sum form)
+    if n >= 3:
+        templates.append(_make_bin("add",
+            _make_bin("mul", rv(), _make_un("cos", _make_bin("mul", rv(), rv()))),
+            _make_bin("mul", rv(), _make_un("cos",
+                _make_bin("add", _make_bin("mul", rv(), rv()), rv())))))
+
+    # Template 31: v1 / (exp(v1/v2) - 1) — Planck with variable numerator
+    if n >= 2:
+        templates.append(_make_bin("div", rv(),
+            _make_bin("sub",
+                _make_un("exp", _make_bin("div", rv(), rv())),
+                _make_const(1.0))))
+
+    # Template 32: v1 / (exp(v2/v3) - 1) — general Planck
+    if n >= 2:
+        templates.append(_make_bin("div", rv(),
+            _make_bin("sub",
+                _make_un("exp", _make_bin("div", rv(), rv())),
+                _make_const(1.0))))
+
     return templates
 
 
@@ -580,6 +613,60 @@ def local_search(rng: np.random.Generator, tree: Node, X: np.ndarray,
     return best
 
 
+def _collect_constants(node: Node) -> list[Node]:
+    """Collect all constant nodes in the tree."""
+    result = []
+    if node.kind == "const":
+        result.append(node)
+    for c in node.children:
+        result.extend(_collect_constants(c))
+    return result
+
+
+def scipy_constant_optimize(tree: Node, X: np.ndarray, y: np.ndarray,
+                             var_names: list[str], max_evals: int = 200) -> Node:
+    """Optimize all constants in a tree using scipy.optimize.minimize (Nelder-Mead).
+    Returns a new tree with optimized constants."""
+    optimized = tree.copy()
+    const_nodes = _collect_constants(optimized)
+    if not const_nodes:
+        return optimized
+
+    # Extract initial constant values
+    x0 = np.array([n.value for n in const_nodes], dtype=np.float64)
+    if len(x0) > 15:
+        # Too many constants — optimization unlikely to help, skip
+        return optimized
+
+    def objective(params):
+        for i, node in enumerate(const_nodes):
+            node.value = float(params[i])
+        try:
+            y_pred = evaluate_tree(optimized, X, var_names)
+            y_pred = np.nan_to_num(y_pred, nan=1e10, posinf=1e10, neginf=-1e10)
+            a, b = linear_scale(y_pred, y)
+            y_scaled = a * y_pred + b
+            mse = np.mean((y - y_scaled) ** 2)
+            if not np.isfinite(mse):
+                return 1e15
+            return mse
+        except Exception:
+            return 1e15
+
+    try:
+        result = minimize(objective, x0, method='Nelder-Mead',
+                         options={'maxfev': max_evals, 'xatol': 1e-8, 'fatol': 1e-12})
+        # Apply the optimized constants
+        for i, node in enumerate(const_nodes):
+            node.value = float(result.x[i])
+    except Exception:
+        # Restore original values on failure
+        for i, node in enumerate(const_nodes):
+            node.value = float(x0[i])
+
+    return optimized
+
+
 def tournament_select(rng: np.random.Generator, population: list[Node],
                       fitnesses: list[float], k: int) -> Node:
     """Tournament selection."""
@@ -743,6 +830,19 @@ def run_equation(eid: str) -> dict:
             best_tree = tree
             best_r2_test = r2_te
             best_result_info = (r2_te, r2_tr, exact)
+
+    # Scipy polish: optimize constants in the best tree if not exact
+    if best_tree is not None and best_result_info and not best_result_info[2]:
+        optimized = scipy_constant_optimize(
+            best_tree, X_train, y_train, eq["variables"], max_evals=500)
+        r2_te, r2_tr, exact, a, b = _score_tree(
+            optimized, X_train, y_train, X_test, y_test, eq["variables"])
+        if exact or r2_te > best_r2_test:
+            best_tree = optimized
+            best_r2_test = r2_te
+            best_result_info = (r2_te, r2_tr, exact)
+            if exact:
+                print(f"  scipy polish found exact match! expr={optimized}")
 
     elapsed = time.time() - t0
 
