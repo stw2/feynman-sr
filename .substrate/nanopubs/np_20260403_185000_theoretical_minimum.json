@@ -9,7 +9,7 @@
     "details": {
       "hypothesis": "The current system at 192 total nodes may have room for further node count reduction through additional compound operators or simplification rules.",
       "changes": [
-        "No code changes — this is a verification/analysis finding"
+        "No code changes \u2014 this is a verification/analysis finding"
       ],
       "results": {
         "verification": {
@@ -35,9 +35,9 @@
           "solution_operators": "planck (unary), div/divself/gaussdiv/invsum/mul/mullorentz/mulsq/parallel/planckself/sqover/sqrtdiv (binary), boltzmann3/cosrule3/divmul/kinematic/mdivsq/msqrtdiv/mul3/muldiv/mullj3/mullorentz3/mulnegexp3/mulsin3/projrange/snell3 (ternary), damposc4/doppler4/drag4/logistic4/magforce4/morse4/pendulum4/rccirc4/standwave4/wavesup4 (quaternary)"
         },
         "implications": [
-          "No further node count reduction is possible — 192 is the provable floor",
+          "No further node count reduction is possible \u2014 192 is the provable floor",
           "Future optimization efforts should focus on code simplification, robustness, or runtime if needed",
-          "All 36 unused operators serve as GP search primitives and simplification rule inputs — they enable the evolutionary fallback path",
+          "All 36 unused operators serve as GP search primitives and simplification rule inputs \u2014 they enable the evolutionary fallback path",
           "The permutation template fast-path solves all 50 equations at generation 0, bypassing GP evolution entirely"
         ]
       },
