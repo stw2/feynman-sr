@@ -975,6 +975,11 @@ def run_equation(eid: str) -> dict:
             best_r2_test = r2_te
             best_result_info = (r2_te, r2_tr, exact)
 
+        # Early exit: no need for more restarts if we already have an exact match
+        if exact:
+            print(f"  exact match found on restart {restart+1}, skipping remaining restarts")
+            break
+
     # Scipy polish: optimize constants in the best tree if not exact
     if best_tree is not None and best_result_info and not best_result_info[2]:
         optimized = scipy_constant_optimize(
