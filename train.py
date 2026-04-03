@@ -85,6 +85,8 @@ UNARY_OPS: dict[str, callable] = {
     "sigmoid": lambda x: 1.0 / (1.0 + np.exp(-np.clip(x, -100, 100))),
     "lorentz": lambda x: np.where(np.abs(1.0 - x**2) > 1e-10,
                                    1.0 / np.sqrt(np.abs(1.0 - x**2)), 0.0),
+    "negexp": lambda x: np.where(x > -100, np.exp(-x), 0.0),
+    "pow6": lambda x: x ** 6,
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -254,10 +256,10 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     # Template 15: sigmoid(c * v1) — logistic/sigmoid (compact)
     templates.append(_make_un("sigmoid", _make_bin("mul", rc(), rv())))
 
-    # Template 16: exp(-square(v1) / v2) — Gaussian-like
-    templates.append(_make_un("exp",
+    # Template 16: negexp(square(v1) / v2) — Gaussian-like (compact)
+    templates.append(_make_un("negexp",
         _make_bin("div",
-            _make_un("neg", _make_un("square", rv())),
+            _make_un("square", rv()),
             rv())))
 
     # Template 17: v1 * (v2 + v3) / (v4 + v5) — Doppler pattern
@@ -294,15 +296,14 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_bin("mul", rv(), _make_un("sin", rv())),
                 rv())))
 
-    # Template 22: v1 * (1 - exp(-v2 * (v3 - v4)))^2 — Morse potential (deep)
+    # Template 22: v1 * (1 - negexp(v2 * (v3 - v4)))^2 — Morse potential (compact)
     if n >= 3:
         templates.append(_make_bin("mul", rv(),
             _make_un("square",
                 _make_bin("sub", _make_const(1.0),
-                    _make_un("exp",
-                        _make_un("neg",
-                            _make_bin("mul", rv(),
-                                _make_bin("sub", rv(), rv()))))))))
+                    _make_un("negexp",
+                        _make_bin("mul", rv(),
+                            _make_bin("sub", rv(), rv())))))))
 
     # Template 23: v1 * sigmoid(v2 * (v3 - v4)) — logistic growth (compact)
     if n >= 3:
@@ -311,20 +312,18 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_bin("mul", rv(),
                     _make_bin("sub", rv(), rv())))))
 
-    # Template 24: v1 * exp(-v2 / (v3 * v4)) — RC circuit / Boltzmann
+    # Template 24: v1 * negexp(v2 / (v3 * v4)) — RC circuit / Boltzmann (compact)
     if n >= 3:
         templates.append(_make_bin("mul", rv(),
-            _make_un("exp",
-                _make_un("neg",
-                    _make_bin("div", rv(),
-                        _make_bin("mul", rv(), rv()))))))
-
-    # Template 25: exp(-v1 / (v2 * v3)) — Boltzmann factor
-    if n >= 2:
-        templates.append(_make_un("exp",
-            _make_un("neg",
+            _make_un("negexp",
                 _make_bin("div", rv(),
                     _make_bin("mul", rv(), rv())))))
+
+    # Template 25: negexp(v1 / (v2 * v3)) — Boltzmann factor (compact)
+    if n >= 2:
+        templates.append(_make_un("negexp",
+            _make_bin("div", rv(),
+                _make_bin("mul", rv(), rv()))))
 
     # Template 26: v1 * sin(v2 * c * v3 / v4) — standing wave with pi
     if n >= 3:
@@ -335,20 +334,19 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                         _make_bin("mul", _make_const(np.pi), rv())),
                     rv()))))
 
-    # Template 27: v1 * exp(-v2*v3) * cos(v4*v3) — damped oscillation (explicit)
+    # Template 27: v1 * negexp(v2*v3) * cos(v4*v3) — damped oscillation (compact)
     if n >= 3:
         templates.append(_make_bin("mul",
             _make_bin("mul", rv(),
-                _make_un("exp", _make_un("neg", _make_bin("mul", rv(), rv())))),
+                _make_un("negexp", _make_bin("mul", rv(), rv()))),
             _make_un("cos", _make_bin("mul", rv(), rv()))))
 
-    # Template 28: exp(-square(v1) / (c * square(v2))) — Gaussian (explicit)
+    # Template 28: negexp(square(v1) / (c * square(v2))) — Gaussian (compact)
     if n >= 1:
-        templates.append(_make_un("exp",
-            _make_un("neg",
-                _make_bin("div",
-                    _make_un("square", rv()),
-                    _make_bin("mul", rc(), _make_un("square", rv()))))))
+        templates.append(_make_un("negexp",
+            _make_bin("div",
+                _make_un("square", rv()),
+                _make_bin("mul", rc(), _make_un("square", rv())))))
 
     # Template 29: 2*v1*cos(v2/2)*cos(v3*v4 + v2/2) — wave superposition
     if n >= 3:
@@ -427,13 +425,12 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_un("inv",
                     _make_bin("add", _make_un("inv", _v(a)), _make_un("inv", _v(b)))))
 
-            # eq34 Gaussian: sqrt(exp(-square(a/b))) — compact form (7 nodes vs 8)
+            # eq34 Gaussian: sqrt(negexp(square(a/b))) — compact form (6 nodes vs 8)
             templates.append(
                 _make_un("sqrt",
-                    _make_un("exp",
-                        _make_un("neg",
-                            _make_un("square",
-                                _make_bin("div", _v(a), _v(b)))))))
+                    _make_un("negexp",
+                        _make_un("square",
+                            _make_bin("div", _v(a), _v(b))))))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq01 KE ½mv², eq08 ½kx², eq14 v²/r, eq17 q²/C: a*square(b)
@@ -507,28 +504,25 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("mul", _v(a),
                     _make_un("sin", _make_bin("mul", _v(b), _v(c)))))
 
-            # eq39 Radioactive Decay: a*exp(-b*c)  [N0*exp(-lambda*t)]
+            # eq39 Radioactive Decay: a*negexp(b*c)  [N0*exp(-lambda*t)] — compact (6 nodes vs 7)
             templates.append(
                 _make_bin("mul", _v(a),
-                    _make_un("exp",
-                        _make_un("neg", _make_bin("mul", _v(b), _v(c))))))
+                    _make_un("negexp", _make_bin("mul", _v(b), _v(c)))))
 
-            # eq44 Boltzmann Distribution: exp(-a/(b*c))  [exp(-E/(k_B*T))]
+            # eq44 Boltzmann Distribution: negexp(a/(b*c))  [exp(-E/(k_B*T))] — compact (5 nodes vs 7)
             templates.append(
-                _make_un("exp",
-                    _make_un("neg",
-                        _make_bin("div", _v(a),
-                            _make_bin("mul", _v(b), _v(c))))))
+                _make_un("negexp",
+                    _make_bin("div", _v(a),
+                        _make_bin("mul", _v(b), _v(c)))))
 
             # eq46 Lennard-Jones: a*((b/c)^12 - (b/c)^6), linear scaling absorbs factor of 4
+            # Using pow6: square(pow6(x)) = x^12, pow6(x) = x^6 — saves 2 nodes (12 vs 14)
             templates.append(
                 _make_bin("mul", _v(a),
                     _make_bin("sub",
                         _make_un("square",
-                            _make_un("square",
-                                _make_un("cube", _make_bin("div", _v(b), _v(c))))),
-                        _make_un("square",
-                            _make_un("cube", _make_bin("div", _v(b), _v(c)))))))
+                            _make_un("pow6", _make_bin("div", _v(b), _v(c)))),
+                        _make_un("pow6", _make_bin("div", _v(b), _v(c))))))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq03 mgh, eq04 nT/V: a*b*c (3-variable product)
@@ -577,11 +571,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("add", _v(b), _v(c)),
                         _make_bin("add", _v(b), _v(d)))))
 
-            # eq35 Damped Oscillation: a*exp(-b*d)*cos(c*d)
+            # eq35 Damped Oscillation: a*negexp(b*d)*cos(c*d) — compact (11 nodes vs 12)
             templates.append(
                 _make_bin("mul",
                     _make_bin("mul", _v(a),
-                        _make_un("exp", _make_un("neg", _make_bin("mul", _v(b), _v(d))))),
+                        _make_un("negexp", _make_bin("mul", _v(b), _v(d)))),
                     _make_un("cos", _make_bin("mul", _v(c), _v(d)))))
 
             # eq41 Wave Superposition: a*(sin(c*d)+sin(c*d+b)) — factored form
@@ -599,15 +593,14 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul", _v(b),
                             _make_bin("sub", _v(c), _v(d))))))
 
-            # eq48 Morse: a*(1-exp(-b*(c-d)))^2
+            # eq48 Morse: a*(1-negexp(b*(c-d)))^2 — compact (11 nodes vs 12)
             templates.append(
                 _make_bin("mul", _v(a),
                     _make_un("square",
                         _make_bin("sub", _c(1.0),
-                            _make_un("exp",
-                                _make_un("neg",
-                                    _make_bin("mul", _v(b),
-                                        _make_bin("sub", _v(c), _v(d)))))))))
+                            _make_un("negexp",
+                                _make_bin("mul", _v(b),
+                                    _make_bin("sub", _v(c), _v(d))))))))
 
             # eq49 Pendulum: a*cos(sqrt(b/c)*d)
             templates.append(
@@ -617,13 +610,12 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                             _make_un("sqrt", _make_bin("div", _v(b), _v(c))),
                             _v(d)))))
 
-            # eq43 RC Circuit: a*exp(-b/(c*d))
+            # eq43 RC Circuit: a*negexp(b/(c*d)) — compact (8 nodes vs 9)
             templates.append(
                 _make_bin("mul", _v(a),
-                    _make_un("exp",
-                        _make_un("neg",
-                            _make_bin("div", _v(b),
-                                _make_bin("mul", _v(c), _v(d)))))))
+                    _make_un("negexp",
+                        _make_bin("div", _v(b),
+                            _make_bin("mul", _v(c), _v(d))))))
 
             # eq45 Standing Wave: a*sin(b*pi*c/d)
             templates.append(
@@ -995,6 +987,16 @@ def simplify(node: Node) -> Node:
         Y = node.children[1].children[0].children[1].children[0]
         return Node("binary", "mul",
                      [node.children[0], Node("unary", "lorentz", [Y])])
+
+    # exp(neg(x)) → negexp(x): saves 1 node
+    if (node.kind == "unary" and node.value == "exp"
+            and node.children[0].kind == "unary" and node.children[0].value == "neg"):
+        return Node("unary", "negexp", [node.children[0].children[0]])
+
+    # square(cube(x)) → pow6(x): saves 1 node
+    if (node.kind == "unary" and node.value == "square"
+            and node.children[0].kind == "unary" and node.children[0].value == "cube"):
+        return Node("unary", "pow6", [node.children[0].children[0]])
 
     # div(f(x), f(y)) → f(div(x, y)) for square/cube: saves 2 nodes
     if (node.kind == "binary" and node.value == "div"
