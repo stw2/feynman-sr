@@ -41,6 +41,7 @@ POPULATION_SIZE = 500
 GENERATIONS = 80
 TOURNAMENT_SIZE = 7
 MAX_DEPTH = 6
+MAX_OFFSPRING_DEPTH = 7  # allow crossover/mutation to create slightly deeper trees
 CROSSOVER_PROB = 0.60
 SUBTREE_MUTATION_PROB = 0.12
 POINT_MUTATION_PROB = 0.10
@@ -290,10 +291,68 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_bin("mul", rv(), _make_un("sin", rv())),
                 rv())))
 
+    # Template 22: v1 * (1 - exp(-v2 * (v3 - v4)))^2 — Morse potential (deep)
+    if n >= 3:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("square",
+                _make_bin("sub", _make_const(1.0),
+                    _make_un("exp",
+                        _make_un("neg",
+                            _make_bin("mul", rv(),
+                                _make_bin("sub", rv(), rv()))))))))
+
+    # Template 23: v1 / (1 + exp(-v2 * (v3 - v4))) — logistic growth (deep)
+    if n >= 3:
+        templates.append(_make_bin("div", rv(),
+            _make_bin("add", _make_const(1.0),
+                _make_un("exp",
+                    _make_un("neg",
+                        _make_bin("mul", rv(),
+                            _make_bin("sub", rv(), rv())))))))
+
+    # Template 24: v1 * exp(-v2 / (v3 * v4)) — RC circuit / Boltzmann
+    if n >= 3:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("exp",
+                _make_un("neg",
+                    _make_bin("div", rv(),
+                        _make_bin("mul", rv(), rv()))))))
+
+    # Template 25: exp(-v1 / (v2 * v3)) — Boltzmann factor
+    if n >= 2:
+        templates.append(_make_un("exp",
+            _make_un("neg",
+                _make_bin("div", rv(),
+                    _make_bin("mul", rv(), rv())))))
+
+    # Template 26: v1 * sin(v2 * c * v3 / v4) — standing wave with pi
+    if n >= 3:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("sin",
+                _make_bin("div",
+                    _make_bin("mul", rv(),
+                        _make_bin("mul", _make_const(np.pi), rv())),
+                    rv()))))
+
+    # Template 27: v1 * exp(-v2*v3) * cos(v4*v3) — damped oscillation (explicit)
+    if n >= 3:
+        templates.append(_make_bin("mul",
+            _make_bin("mul", rv(),
+                _make_un("exp", _make_un("neg", _make_bin("mul", rv(), rv())))),
+            _make_un("cos", _make_bin("mul", rv(), rv()))))
+
+    # Template 28: exp(-square(v1) / (c * square(v2))) — Gaussian (explicit)
+    if n >= 1:
+        templates.append(_make_un("exp",
+            _make_un("neg",
+                _make_bin("div",
+                    _make_un("square", rv()),
+                    _make_bin("mul", rc(), _make_un("square", rv()))))))
+
     return templates
 
 
-TEMPLATE_SEED_FRACTION = 0.20  # 20% of population seeded with templates
+TEMPLATE_SEED_FRACTION = 0.25  # 25% of population seeded with templates
 
 
 def ramped_half_and_half(rng: np.random.Generator, variables: list[str],
@@ -608,10 +667,10 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
             if r < cx_prob:
                 p1 = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
                 p2 = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
-                child = crossover(rng, p1, p2, MAX_DEPTH)
+                child = crossover(rng, p1, p2, MAX_OFFSPRING_DEPTH)
             elif r < cx_prob + sm_prob:
                 parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
-                child = mutate(rng, parent, variables, MAX_DEPTH)
+                child = mutate(rng, parent, variables, MAX_OFFSPRING_DEPTH)
             elif r < cx_prob + sm_prob + pm_prob:
                 parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
                 child = point_mutate(rng, parent, variables)
