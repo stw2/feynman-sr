@@ -70,6 +70,7 @@ BINARY_OPS: dict[str, callable] = {
     "hypot": lambda x, y: np.sqrt(x**2 + y**2),
     "sumshift": lambda x, y: np.sin(x) + np.sin(x + y),
     "damposc": lambda x, y: np.where(x < 100, np.exp(-x), 0.0) * np.cos(y),
+    "cosrule": lambda x, y: np.sqrt(np.abs(1.0 + x**2 - 2.0 * x * np.cos(y))),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -91,6 +92,7 @@ UNARY_OPS: dict[str, callable] = {
     "pow6": lambda x: x ** 6,
     "lj": lambda x: x ** 12 - x ** 6,
     "morse": lambda x: (1.0 - np.where(x > -100, np.exp(-x), 0.0)) ** 2,
+    "sinpi": lambda x: np.sin(np.pi * x),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -273,14 +275,10 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_bin("add", rv(), rv()),
                 _make_bin("add", rv(), rv()))))
 
-    # Template 18: square(v1) + square(v2) - c*v1*v2*cos(v3) — cosine rule
+    # Template 18: v1*cosrule(v2/v1, v3) — cosine rule (compact)
     if n >= 3:
-        templates.append(_make_un("sqrt",
-            _make_bin("sub",
-                _make_bin("add", _make_un("square", rv()), _make_un("square", rv())),
-                _make_bin("mul",
-                    _make_bin("mul", rc(), _make_bin("mul", rv(), rv())),
-                    _make_un("cos", rv())))))
+        templates.append(_make_bin("mul", rv(),
+            _make_bin("cosrule", _make_bin("div", rv(), rv()), rv())))
 
     # Template 19: v1 * cos(sqrt(v2/v3) * v4) — pendulum pattern
     if n >= 3:
@@ -329,13 +327,12 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
             _make_bin("div", rv(),
                 _make_bin("mul", rv(), rv()))))
 
-    # Template 26: v1 * sin(v2 * c * v3 / v4) — standing wave with pi
+    # Template 26: v1 * sinpi(v2 * v3 / v4) — standing wave (compact)
     if n >= 3:
         templates.append(_make_bin("mul", rv(),
-            _make_un("sin",
+            _make_un("sinpi",
                 _make_bin("div",
-                    _make_bin("mul", rv(),
-                        _make_bin("mul", _make_const(np.pi), rv())),
+                    _make_bin("mul", rv(), rv()),
                     rv()))))
 
     # Template 27: v1 * negexp(v2*v3) * cos(v4*v3) — damped oscillation (compact)
@@ -483,11 +480,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul", _v(a), _make_un("sin", _v(b))),
                         _v(c))))
 
-            # eq37 Cosine Rule: hypot(a-b*cos(c), b*sin(c)) — compact (11 nodes vs 14)
+            # eq37 Cosine Rule: b*cosrule(a/b, c) where cosrule(x,y)=sqrt(1+x²-2x*cos(y)) — compact (7 nodes vs 11)
             templates.append(
-                _make_bin("hypot",
-                    _make_bin("sub", _v(a), _make_bin("mul", _v(b), _make_un("cos", _v(c)))),
-                    _make_bin("mul", _v(b), _make_un("sin", _v(c)))))
+                _make_bin("mul", _v(b),
+                    _make_bin("cosrule", _make_bin("div", _v(a), _v(b)), _v(c))))
 
             # eq30 Relativistic Energy: a*square(c)*lorentz(b/c) — compact (8 nodes vs 11)
             templates.append(
@@ -633,13 +629,12 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul", _v(b), _v(d)),
                         _make_bin("mul", _v(c), _v(d)))))
 
-            # eq45 Standing Wave: a*sin(b*pi*c/d)
+            # eq45 Standing Wave: a*sinpi(b*c/d) where sinpi(x)=sin(πx) — compact (8 nodes vs 10)
             templates.append(
                 _make_bin("mul", _v(a),
-                    _make_un("sin",
+                    _make_un("sinpi",
                         _make_bin("div",
-                            _make_bin("mul", _v(b),
-                                _make_bin("mul", _make_const(np.pi), _v(c))),
+                            _make_bin("mul", _v(b), _v(c)),
                             _v(d)))))
 
             # --- Algebraic templates for tier 1-2 ---
@@ -1084,6 +1079,36 @@ def simplify(node: Node) -> Node:
             and node.children[1].kind == "unary" and node.children[1].value == "negexp"):
         return Node("binary", "damposc",
                      [node.children[1].children[0], node.children[0].children[0]])
+
+    # hypot(sub(X, mul(Y, cos(Z))), mul(Y, sin(Z))) → mul(Y, cosrule(div(X, Y), Z)): saves 4 nodes (cosine rule)
+    if (node.kind == "binary" and node.value == "hypot"
+            and node.children[0].kind == "binary" and node.children[0].value == "sub"
+            and node.children[0].children[1].kind == "binary"
+            and node.children[0].children[1].value == "mul"
+            and node.children[0].children[1].children[1].kind == "unary"
+            and node.children[0].children[1].children[1].value == "cos"
+            and node.children[1].kind == "binary" and node.children[1].value == "mul"
+            and node.children[1].children[1].kind == "unary"
+            and node.children[1].children[1].value == "sin"
+            and str(node.children[0].children[1].children[0]) == str(node.children[1].children[0])
+            and str(node.children[0].children[1].children[1].children[0])
+                == str(node.children[1].children[1].children[0])):
+        X = node.children[0].children[0]
+        Y = node.children[0].children[1].children[0]
+        Z = node.children[0].children[1].children[1].children[0]
+        return Node("binary", "mul",
+                     [Y, Node("binary", "cosrule",
+                              [Node("binary", "div", [X, Y]), Z])])
+
+    # sin(mul(pi, x)) or sin(mul(x, pi)) → sinpi(x): saves 2 nodes
+    if (node.kind == "unary" and node.value == "sin"
+            and node.children[0].kind == "binary" and node.children[0].value == "mul"):
+        left = node.children[0].children[0]
+        right = node.children[0].children[1]
+        if left.kind == "const" and abs(left.value - np.pi) < 1e-6:
+            return Node("unary", "sinpi", [right])
+        if right.kind == "const" and abs(right.value - np.pi) < 1e-6:
+            return Node("unary", "sinpi", [left])
 
     # add(sin(x), sin(add(x, y))) → sumshift(x, y): saves 6 nodes (wave superposition)
     if (node.kind == "binary" and node.value == "add"
