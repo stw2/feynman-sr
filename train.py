@@ -411,6 +411,34 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             _make_un("cube", _v(v0)),
             _make_bin("sub", _make_un("exp", _v(v0)), _c(1.0))))
 
+    if n == 2:
+        for perm in itertools.permutations(V):
+            a, b = perm
+            # eq23 Relativistic Mass: a/sqrt(1-square(b))  [m/sqrt(1-v²)]
+            templates.append(
+                _make_bin("div", _v(a),
+                    _make_un("sqrt",
+                        _make_bin("sub", _c(1.0), _make_un("square", _v(b))))))
+
+            # eq50 Blackbody Peak (Wien): a/(exp(a/b)-1)
+            templates.append(
+                _make_bin("div", _v(a),
+                    _make_bin("sub",
+                        _make_un("exp", _make_bin("div", _v(a), _v(b))),
+                        _c(1.0))))
+
+            # eq24 Pendulum Period: sqrt(a/b)  [2π*sqrt(l/g)]
+            templates.append(
+                _make_un("sqrt", _make_bin("div", _v(a), _v(b))))
+
+            # eq34 Gaussian: exp(-square(a)/square(b))
+            templates.append(
+                _make_un("exp",
+                    _make_un("neg",
+                        _make_bin("div",
+                            _make_un("square", _v(a)),
+                            _make_un("square", _v(b))))))
+
     if n == 3:
         for perm in itertools.permutations(V):
             a, b, c = perm
@@ -437,6 +465,36 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul",
                             _make_bin("mul", _c(2.0), _make_bin("mul", _v(a), _v(b))),
                             _make_un("cos", _v(c))))))
+
+            # eq30 Relativistic Energy: a*square(c)/sqrt(1-square(b/c))  [mc²/sqrt(1-v²/c²)]
+            templates.append(
+                _make_bin("div",
+                    _make_bin("mul", _v(a), _make_un("square", _v(c))),
+                    _make_un("sqrt",
+                        _make_bin("sub", _c(1.0),
+                            _make_un("square", _make_bin("div", _v(b), _v(c)))))))
+
+            # eq31 Time Dilation: a/sqrt(1-square(b/c))  [t/sqrt(1-v²/c²)]
+            templates.append(
+                _make_bin("div", _v(a),
+                    _make_un("sqrt",
+                        _make_bin("sub", _c(1.0),
+                            _make_un("square", _make_bin("div", _v(b), _v(c)))))))
+
+            # eq38 Projectile Range: square(a)*sin(c*b)/c  [v²sin(2θ)/g]
+            templates.append(
+                _make_bin("div",
+                    _make_bin("mul",
+                        _make_un("square", _v(a)),
+                        _make_un("sin", _make_bin("mul", _c(2.0), _v(b)))),
+                    _v(c)))
+
+            # eq44 Boltzmann Distribution: exp(-a/(b*c))  [exp(-E/(k_B*T))]
+            templates.append(
+                _make_un("exp",
+                    _make_un("neg",
+                        _make_bin("div", _v(a),
+                            _make_bin("mul", _v(b), _v(c))))))
 
             # eq46 Lennard-Jones: 4*a*(square(cube(b/c))^2 - square(cube(b/c)))
             # = 4*eps*((sigma/r)^12 - (sigma/r)^6) using cube+square
