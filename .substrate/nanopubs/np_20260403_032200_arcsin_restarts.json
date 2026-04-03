@@ -35,8 +35,14 @@
         "tier4_exact": "4/18",
         "baseline_exact": 33,
         "baseline_r2_mean": 0.955,
-        "equations_gained": ["eq38 (Projectile Range)", "eq39 (Radioactive Decay)", "tier3 equation"],
-        "equations_lost": ["eq18 (Doppler)"],
+        "equations_gained": [
+          "eq38 (Projectile Range)",
+          "eq39 (Radioactive Decay)",
+          "tier3 equation"
+        ],
+        "equations_lost": [
+          "eq18 (Doppler)"
+        ],
         "net_improvement": "+2 exact matches"
       }
     }
@@ -50,9 +56,9 @@
     ],
     "key_findings": [
       "5 restarts at 24s each gains eq38 (seed=4 required) and eq39 (seed=2)",
-      "arcsin operator changes RNG paths for ALL equations, not just target equations — this caused eq18 (Doppler) to be lost regardless of restart count or time budget",
-      "eq36 (Snell's law) still not solved despite arcsin availability (R²=0.994) — likely needs better constant optimization",
-      "Tier 4 near-misses with R²>0.99: eq34 (Gaussian, 0.999), eq46 (LJ, 0.9997), eq50 (Wien, 0.9999), eq44 (Boltzmann, 0.997)",
+      "arcsin operator changes RNG paths for ALL equations, not just target equations \u2014 this caused eq18 (Doppler) to be lost regardless of restart count or time budget",
+      "eq36 (Snell's law) still not solved despite arcsin availability (R\u00b2=0.994) \u2014 likely needs better constant optimization",
+      "Tier 4 near-misses with R\u00b2>0.99: eq34 (Gaussian, 0.999), eq46 (LJ, 0.9997), eq50 (Wien, 0.9999), eq44 (Boltzmann, 0.997)",
       "Tier 3 achieved perfect 10/10, up from 9/10"
     ],
     "ablation_studies": [
@@ -69,7 +75,9 @@
   "substrate": {
     "room": "c079cfc6-fdb3-4ea4-9917-bac3c90145a7",
     "links": {
-      "supports": ["np_20260403_014345_multi_restart"],
+      "supports": [
+        "np_20260403_014345_multi_restart"
+      ],
       "attacks": []
     }
   }
