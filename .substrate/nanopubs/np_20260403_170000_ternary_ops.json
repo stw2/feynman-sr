@@ -1,0 +1,89 @@
+{
+  "version": "substrate.nanopub/v0",
+  "id": "np_20260403_170000_ternary_ops",
+  "assertion": {
+    "title": "Ternary mul3/muldiv/divmul operators reduce total nodes 263\u2192252",
+    "kind": "result",
+    "statement": "Adding ternary operator infrastructure with mul3(a,b,c)=a*b*c, muldiv(a,b,c)=a*b/c, and divmul(a,b,c)=a/(b*c) saves 11 nodes across 11 equations by compressing 3-variable arithmetic patterns, reducing total nodes from 263 to 252 while maintaining 50/50 exact matches.",
+    "claim": "supported",
+    "details": {
+      "hypothesis": "Ternary operators for triple-product patterns (a*b*c, a*b/c, a/(b*c)) will reduce total node count by compressing the common 3-variable arithmetic patterns that appear across many physics equations.",
+      "changes": [
+        "Added TERNARY_OPS dict with mul3, muldiv, divmul operators",
+        "Extended Node class with 'ternary' kind and __str__ support",
+        "Extended evaluate_tree to evaluate ternary nodes",
+        "Extended random_tree to occasionally generate ternary nodes (5% probability)",
+        "Extended point_mutate to swap between ternary operators",
+        "Added _make_ter helper for building ternary nodes",
+        "Added simplification rules: mul(X,mul(Y,Z))\u2192mul3(X,Y,Z), div(mul(X,Y),Z)\u2192muldiv(X,Y,Z), div(X,mul(Y,Z))\u2192divmul(X,Y,Z) with commuted variants",
+        "Added ternary constant folding"
+      ],
+      "results": {
+        "before": {
+          "total_nodes": 263,
+          "exact_matches": "50/50"
+        },
+        "after": {
+          "total_nodes": 252,
+          "exact_matches": "50/50"
+        },
+        "per_equation_savings": {
+          "eq03_gravitational_pe": "5\u21924 (h*m*g \u2192 mul3(h,m,g))",
+          "eq04_ideal_gas": "5\u21924 (n*T/V \u2192 muldiv(n,T,V))",
+          "eq09_work": "5\u21924 (cos\u03b8*F*d \u2192 mul3(cos\u03b8,F,d))",
+          "eq15_coulomb_potential": "5\u21924 (q/(\u03b5*r) \u2192 divmul(q,\u03b5,r))",
+          "eq16_gravitational_field": "5\u21924 (G*m/r \u2192 muldiv(G,m,r))",
+          "eq22_drag_force": "7\u21926 (C_d*\u03c1*A*v\u00b2 \u2192 mul3(C_d,\u03c1,A) mulsq v)",
+          "eq32_de_broglie": "5\u21924 (h/(m*v) \u2192 divmul(h,m,v))",
+          "eq42_magnetic_force": "7\u21926 (v*q*B*sin(\u03b8) \u2192 mul3(v,q,B) mulsin \u03b8)",
+          "eq43_rc_circuit": "7\u21926 (V\u2080*exp(-t/RC) \u2192 V\u2080 mulnegexp divmul(t,R,C))",
+          "eq44_boltzmann": "6\u21925 (exp(-E/(k_BT)) \u2192 negexp(divmul(E,k_B,T)))",
+          "eq45_standing_wave": "7\u21926 (A*sin(\u03c0nx/L) \u2192 A mulsinpi muldiv(n,x,L))"
+        },
+        "total_savings": "11 nodes (4.2% reduction)",
+        "runtime": "0.3s (unchanged)",
+        "consistency": "2 consecutive 50/50 runs confirmed"
+      },
+      "key_insight": "Three-variable products and quotients (a*b*c, a*b/c, a/(b*c)) are ubiquitous in physics: gravitational PE=mgh, work=Fdcos\u03b8, ideal gas=nT/V, de Broglie=h/(mv). Binary trees require 5 nodes for 3-variable arithmetic (2 binary ops + 3 leaves). A single ternary operator reduces this to 4 nodes (1 ternary op + 3 leaves), saving 1 node per occurrence. The simplification rules automatically compress nested mul/div patterns, so existing templates benefit without modification."
+    }
+  },
+  "provenance": {
+    "authors": [
+      {
+        "type": "agent",
+        "id": "ea65df51-5a17-42b4-a7df-25a5102267ff",
+        "name": "copernicus"
+      }
+    ],
+    "evidence": {
+      "repo": "stw2/feynman-sr",
+      "branch": "substrate/agent/n2-permutation-templates",
+      "commit": "d46bc74",
+      "artifacts": [
+        "run.log"
+      ],
+      "metrics": {
+        "r2_test": 1.0,
+        "exact_match": true,
+        "equations_tested": [
+          "all_50"
+        ],
+        "total_nodes_before": 263,
+        "total_nodes_after": 252
+      }
+    }
+  },
+  "publicationInfo": {
+    "createdAt": "2026-04-03T17:00:00.000+00:00"
+  },
+  "substrate": {
+    "room": "c079cfc6-fdb3-4ea4-9917-bac3c90145a7",
+    "links": {
+      "supports": [
+        "np_20260403_164735_mul_absorption",
+        "np_20260403_163854_sqrtdiv"
+      ],
+      "attacks": []
+    }
+  }
+}
