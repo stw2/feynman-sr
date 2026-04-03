@@ -93,6 +93,25 @@ TERNARY_OPS: dict[str, callable] = {
     "mul3": lambda x, y, z: x * y * z,
     "muldiv": lambda x, y, z: np.where(np.abs(z) > 1e-10, x * y / z, 0.0),
     "divmul": lambda x, y, z: np.where(np.abs(y * z) > 1e-10, x / (y * z), 0.0),
+    "kinematic": lambda v, a, t: t * (2.0 * v + a * t),
+    "cosrule3": lambda a, b, c: np.sqrt(np.abs(a**2 + b**2 - 2.0 * a * b * np.cos(c))),
+    "snell3": lambda n1, th, n2: np.arcsin(np.clip(np.where(np.abs(n2) > 1e-10, n1 * np.sin(th) / n2, 0.0), -1.0, 1.0)),
+    "projrange": lambda v, th, g: np.where(np.abs(g) > 1e-10, v**2 * np.sin(2.0 * th) / g, 0.0),
+    "mdivsq": lambda a, b, c: np.where(np.abs(c) > 1e-10, a * b / c**2, 0.0),
+    "msqrtdiv": lambda a, b, c: np.sqrt(np.abs(np.where(np.abs(c) > 1e-10, a * b / c, 0.0))),
+}
+
+QUATERNARY_OPS: dict[str, callable] = {
+    "damposc4": lambda A, b, omega, t: A * np.where(b * t < 100, np.exp(-b * t), 0.0) * np.cos(omega * t),
+    "doppler4": lambda f, c, vr, vs: np.where(np.abs(c + vs) > 1e-10, f * (c + vr) / (c + vs), 0.0),
+    "wavesup4": lambda A, omega, t, delta: A * (np.sin(omega * t) + np.sin(omega * t + delta)),
+    "logistic4": lambda K, r, t, t0: K / (1.0 + np.exp(-np.clip(r * (t - t0), -100, 100))),
+    "morse4": lambda D, a, r, r0: D * (1.0 - np.where(a * (r - r0) > -100, np.exp(-a * (r - r0)), 0.0)) ** 2,
+    "pendulum4": lambda th0, g, l, t: th0 * np.cos(np.sqrt(np.abs(np.where(np.abs(l) > 1e-10, g / l, 0.0))) * t),
+    "drag4": lambda Cd, rho, A, v: Cd * rho * A * v ** 2,
+    "magforce4": lambda v, q, B, theta: v * q * B * np.sin(theta),
+    "rccirc4": lambda V0, t, R, C: V0 * np.where(np.abs(R * C) > 1e-10, np.where(t / (R * C) < 100, np.exp(-t / (R * C)), 0.0), 0.0),
+    "standwave4": lambda A, n, x, L: A * np.sin(np.pi * np.where(np.abs(L) > 1e-10, n * x / L, 0.0)),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -159,6 +178,8 @@ class Node:
             return f"({self.children[0]} {self.value} {self.children[1]})"
         if self.kind == "ternary":
             return f"{self.value}({self.children[0]}, {self.children[1]}, {self.children[2]})"
+        if self.kind == "quaternary":
+            return f"{self.value}({self.children[0]}, {self.children[1]}, {self.children[2]}, {self.children[3]})"
         return "?"
 
 
@@ -193,6 +214,13 @@ def random_tree(rng: np.random.Generator, variables: list[str],
         b = random_tree(rng, variables, max_depth - 1, method)
         c = random_tree(rng, variables, max_depth - 1, method)
         return Node("ternary", op, [a, b, c])
+    elif QUATERNARY_OPS and r < 0.38:
+        op = rng.choice(list(QUATERNARY_OPS.keys()))
+        a = random_tree(rng, variables, max_depth - 1, method)
+        b = random_tree(rng, variables, max_depth - 1, method)
+        c = random_tree(rng, variables, max_depth - 1, method)
+        d = random_tree(rng, variables, max_depth - 1, method)
+        return Node("quaternary", op, [a, b, c, d])
     else:
         op = rng.choice(list(BINARY_OPS.keys()))
         left = random_tree(rng, variables, max_depth - 1, method)
@@ -214,6 +242,9 @@ def _make_un(op: str, child: Node) -> Node:
 
 def _make_ter(op: str, a: Node, b: Node, c: Node) -> Node:
     return Node("ternary", op, [a, b, c])
+
+def _make_quat(op: str, a: Node, b: Node, c: Node, d: Node) -> Node:
+    return Node("quaternary", op, [a, b, c, d])
 
 
 def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[Node]:
@@ -282,11 +313,9 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     # Template 12: divexpm1(1, v1) — Planck/Bose-Einstein (compact)
     templates.append(_make_bin("divexpm1", _make_const(1.0), rv()))
 
-    # Template 13: sqover(v1, v3) * sin(c * v2) — projectile range pattern (compact)
+    # Template 13: projrange(v1, v2, v3) — projectile range pattern (compact)
     if n >= 2:
-        templates.append(_make_bin("mul",
-            _make_bin("sqover", rv(), rv()),
-            _make_un("sin", _make_bin("mul", rc(), rv()))))
+        templates.append(_make_ter("projrange", rv(), rv(), rv()))
 
     # Template 14: (1 - exp(c * v1))^2 — Morse potential pattern
     templates.append(_make_un("square",
@@ -307,10 +336,9 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_bin("add", rv(), rv()),
                 _make_bin("add", rv(), rv()))))
 
-    # Template 18: v1*cosrule(v2/v1, v3) — cosine rule (compact)
+    # Template 18: cosrule3(v1, v2, v3) — cosine rule (compact)
     if n >= 3:
-        templates.append(_make_bin("mul", rv(),
-            _make_bin("cosrule", _make_bin("div", rv(), rv()), rv())))
+        templates.append(_make_ter("cosrule3", rv(), rv(), rv()))
 
     # Template 19: v1 * cos(sqrtdiv(v2,v3) * v4) — pendulum pattern (compact)
     if n >= 3:
@@ -323,12 +351,9 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     # Template 20: c / v1 — Wien's law pattern
     templates.append(_make_bin("div", rc(), rv()))
 
-    # Template 21: arcsin(v1 * sin(v2) / v3) — Snell's law pattern
+    # Template 21: snell3(v1, v2, v3) — Snell's law pattern (compact)
     if n >= 3:
-        templates.append(_make_un("arcsin",
-            _make_bin("div",
-                _make_bin("mul", rv(), _make_un("sin", rv())),
-                rv())))
+        templates.append(_make_ter("snell3", rv(), rv(), rv()))
 
     # Template 22: mulmorse(v1, v2*(v3-v4)) — Morse potential (compact)
     if n >= 3:
@@ -494,17 +519,13 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_bin("mul", _v(a), _v(b)),
                     _make_bin("div", _v(b), _v(c))))
 
-            # eq36 Snell: arcsin(a*sin(b)/c)
+            # eq36 Snell: snell3(a, b, c) = arcsin(a*sin(b)/c) — compact (4 nodes vs 6)
             templates.append(
-                _make_un("arcsin",
-                    _make_bin("div",
-                        _make_bin("mul", _v(a), _make_un("sin", _v(b))),
-                        _v(c))))
+                _make_ter("snell3", _v(a), _v(b), _v(c)))
 
-            # eq37 Cosine Rule: b*cosrule(a/b, c) where cosrule(x,y)=sqrt(1+x²-2x*cos(y)) — compact (7 nodes vs 11)
+            # eq37 Cosine Rule: cosrule3(a, b, c) = sqrt(a²+b²-2ab*cos(c)) — compact (4 nodes vs 7)
             templates.append(
-                _make_bin("mul", _v(b),
-                    _make_bin("cosrule", _make_bin("div", _v(a), _v(b)), _v(c))))
+                _make_ter("cosrule3", _v(a), _v(b), _v(c)))
 
             # eq30 Relativistic Energy: mullorentz(mulsq(a, c), b/c) — compact (6 nodes vs 11)
             templates.append(
@@ -517,11 +538,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("mullorentz", _v(a),
                     _make_bin("div", _v(b), _v(c))))
 
-            # eq38 Projectile Range: sqover(a, c)*sin2(b)  [v²*sin(2θ)/g] — compact (6 nodes vs 9)
+            # eq38 Projectile Range: projrange(a, b, c) = v²*sin(2θ)/g — compact (4 nodes vs 6)
             templates.append(
-                _make_bin("mul",
-                    _make_bin("sqover", _v(a), _v(c)),
-                    _make_un("sin2", _v(b))))
+                _make_ter("projrange", _v(a), _v(b), _v(c)))
 
             # eq33 Simple Harmonic Motion: mulsin(a, b*c)  [A*sin(omega*t)] — compact (5 nodes vs 6)
             templates.append(
@@ -549,11 +568,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
             templates.append(
                 _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))))
 
-            # eq11 Coulomb q1*q2/r², eq12 Newton m1*m2/r²: divsq(a*b, c) — compact (5 nodes vs 6)
+            # eq11 Coulomb q1*q2/r², eq12 Newton m1*m2/r², eq29 Schwarzschild: mdivsq(a, b, c) = a*b/c² — compact (4 nodes vs 5)
             templates.append(
-                _make_bin("divsq",
-                    _make_bin("mul", _v(a), _v(b)),
-                    _v(c)))
+                _make_ter("mdivsq", _v(a), _v(b), _v(c)))
 
             # eq04 Ideal Gas nT/V, eq16 Gm/r: a*b/c
             templates.append(
@@ -566,99 +583,56 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("div", _v(a),
                     _make_bin("mul", _v(b), _v(c))))
 
-            # eq05 Distance vt+½at²: b*(2*a + c*b) — factored form (save 1 node)
+            # eq05 Distance vt+½at²: kinematic(a, c, b) = b*(2*a + c*b) — compact (4 nodes vs 9)
             templates.append(
-                _make_bin("mul", _v(b),
-                    _make_bin("add",
-                        _make_bin("mul", _c(2.0), _v(a)),
-                        _make_bin("mul", _v(c), _v(b)))))
+                _make_ter("kinematic", _v(a), _v(c), _v(b)))
 
-            # eq29 Schwarzschild 2GM/c²: a*b/square(c) already covered above
-            # eq25, eq27, eq28: sqrtdiv(a*b, c) — escape/orbital/rms velocity — compact (5 nodes vs 6)
+            # eq25, eq27, eq28: msqrtdiv(a, b, c) = sqrt(a*b/c) — escape/orbital/rms velocity — compact (4 nodes vs 5)
             templates.append(
-                _make_bin("sqrtdiv",
-                    _make_bin("mul", _v(a), _v(b)),
-                    _v(c)))
+                _make_ter("msqrtdiv", _v(a), _v(b), _v(c)))
 
     if n == 4:
         for perm in itertools.permutations(V):
             a, b, c, d = perm
-            # eq18 Doppler: a*(b+c)/(b+d) = f*(c+v_r)/(c+v_s)
+            # eq18 Doppler: doppler4(a, b, c, d) = a*(b+c)/(b+d) — quaternary (5 nodes vs 8)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_bin("div",
-                        _make_bin("add", _v(b), _v(c)),
-                        _make_bin("add", _v(b), _v(d)))))
+                _make_quat("doppler4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq35 Damped Oscillation: a*negexp(b*d)*cos(c*d) — compact (11 nodes vs 12)
+            # eq35 Damped Oscillation: damposc4(a, b, c, d) = a*exp(-b*d)*cos(c*d) — quaternary (5 nodes vs 9)
             templates.append(
-                _make_bin("mul",
-                    _make_bin("mul", _v(a),
-                        _make_un("negexp", _make_bin("mul", _v(b), _v(d)))),
-                    _make_un("cos", _make_bin("mul", _v(c), _v(d)))))
+                _make_quat("damposc4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq41 Wave Superposition: a*sumshift(c*d, b) where sumshift(x,y)=sin(x)+sin(x+y) — compact (7 nodes vs 13)
+            # eq41 Wave Superposition: wavesup4(a, c, d, b) = a*(sin(c*d)+sin(c*d+b)) — quaternary (5 nodes vs 7)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_bin("sumshift", _make_bin("mul", _v(c), _v(d)), _v(b))))
+                _make_quat("wavesup4", _v(a), _v(c), _v(d), _v(b)))
 
-            # eq47 Logistic: mulsigmoid(a, b*(c-d)) — compact (7 nodes vs 11)
+            # eq47 Logistic: logistic4(a, b, c, d) = a/(1+exp(-b*(c-d))) — quaternary (5 nodes vs 7)
             templates.append(
-                _make_bin("mulsigmoid", _v(a),
-                    _make_bin("mul", _v(b),
-                        _make_bin("sub", _v(c), _v(d)))))
+                _make_quat("logistic4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq48 Morse: mulmorse(a, b*(c-d)) — compact (7 nodes vs 12)
+            # eq48 Morse: morse4(a, b, c, d) = a*(1-exp(-b*(c-d)))² — quaternary (5 nodes vs 7)
             templates.append(
-                _make_bin("mulmorse", _v(a),
-                    _make_bin("mul", _v(b),
-                        _make_bin("sub", _v(c), _v(d)))))
+                _make_quat("morse4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq49 Pendulum: mulcos(a, sqrtdiv(b,c)*d) — compact (7 nodes vs 9)
+            # eq49 Pendulum: pendulum4(a, b, c, d) = a*cos(sqrt(b/c)*d) — quaternary (5 nodes vs 7)
             templates.append(
-                _make_bin("mulcos", _v(a),
-                    _make_bin("mul",
-                        _make_bin("sqrtdiv", _v(b), _v(c)),
-                        _v(d))))
+                _make_quat("pendulum4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq43 RC Circuit: mulnegexp(a, b/(c*d)) — compact (7 nodes vs 9)
+            # eq43 RC Circuit: rccirc4(a, b, c, d) = a*exp(-b/(c*d)) — quaternary (5 nodes vs 6)
             templates.append(
-                _make_bin("mulnegexp", _v(a),
-                    _make_bin("div", _v(b),
-                        _make_bin("mul", _v(c), _v(d)))))
+                _make_quat("rccirc4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq48 Morse: mulmorse(a, b*(c-d)) where morse(x)=(1-exp(-x))^2 — compact (7 nodes vs 11)
+            # eq45 Standing Wave: standwave4(a, b, c, d) = a*sin(π*b*c/d) — quaternary (5 nodes vs 6)
             templates.append(
-                _make_bin("mulmorse", _v(a),
-                    _make_bin("mul", _v(b),
-                        _make_bin("sub", _v(c), _v(d)))))
+                _make_quat("standwave4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq35 Damped Oscillation: a*damposc(b*d, c*d) where damposc(x,y)=exp(-x)*cos(y) — compact (9 nodes vs 11)
+            # eq42 Magnetic Force: magforce4(a, b, c, d) = a*b*c*sin(d) — quaternary (5 nodes vs 6)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_bin("damposc",
-                        _make_bin("mul", _v(b), _v(d)),
-                        _make_bin("mul", _v(c), _v(d)))))
+                _make_quat("magforce4", _v(a), _v(b), _v(c), _v(d)))
 
-            # eq45 Standing Wave: mulsinpi(a, b*c/d) where sinpi(x)=sin(πx) — compact (7 nodes vs 10)
+            # eq22 Drag: drag4(a, b, c, d) = a*b*c*d² — quaternary (5 nodes vs 6)
             templates.append(
-                _make_bin("mulsinpi", _v(a),
-                    _make_bin("div",
-                        _make_bin("mul", _v(b), _v(c)),
-                        _v(d))))
-
-            # --- Algebraic templates for tier 1-2 ---
-            # eq42 Magnetic Force: mulsin(a*b*c, d) = a*b*c*sin(d) — compact (7 nodes vs 8)
-            templates.append(
-                _make_bin("mulsin",
-                    _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))),
-                    _v(d)))
-
-            # eq22 Drag ½*Cd*rho*A*v²: mulsq(a*b*c, d) — compact (7 nodes vs 8)
-            templates.append(
-                _make_bin("mulsq",
-                    _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))),
-                    _v(d)))
+                _make_quat("drag4", _v(a), _v(b), _v(c), _v(d)))
 
     return templates
 
@@ -727,6 +701,13 @@ def evaluate_tree(node: Node, X: np.ndarray, var_names: list[str]) -> np.ndarray
         c_val = evaluate_tree(node.children[2], X, var_names)
         op_fn = TERNARY_OPS[node.value]
         return op_fn(a_val, b_val, c_val)
+    if node.kind == "quaternary":
+        a_val = evaluate_tree(node.children[0], X, var_names)
+        b_val = evaluate_tree(node.children[1], X, var_names)
+        c_val = evaluate_tree(node.children[2], X, var_names)
+        d_val = evaluate_tree(node.children[3], X, var_names)
+        op_fn = QUATERNARY_OPS[node.value]
+        return op_fn(a_val, b_val, c_val, d_val)
     return np.zeros(X.shape[0])
 
 
@@ -820,7 +801,12 @@ def point_mutate(rng: np.random.Generator, tree: Node, variables: list[str]) -> 
     nodes = _collect_nodes(mutant)
     target = rng.choice(nodes)
 
-    if target.kind == "ternary":
+    if target.kind == "quaternary":
+        # Swap to a different quaternary operator
+        ops = [op for op in QUATERNARY_OPS.keys() if op != target.value]
+        if ops:
+            target.value = rng.choice(ops)
+    elif target.kind == "ternary":
         # Swap to a different ternary operator
         ops = [op for op in TERNARY_OPS.keys() if op != target.value]
         if ops:
@@ -1338,6 +1324,69 @@ def simplify(node: Node) -> Node:
         return Node("ternary", "divmul",
                      [node.children[0], node.children[1].children[0], node.children[1].children[1]])
 
+    # mul(X, cosrule(div(Y, X), Z)) → cosrule3(Y, X, Z): saves 3 nodes (cosine rule)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "binary" and node.children[1].value == "cosrule"
+            and node.children[1].children[0].kind == "binary"
+            and node.children[1].children[0].value == "div"
+            and str(node.children[1].children[0].children[1]) == str(node.children[0])):
+        Y = node.children[1].children[0].children[0]
+        X = node.children[0]
+        Z = node.children[1].children[1]
+        return Node("ternary", "cosrule3", [Y, X, Z])
+
+    # arcsin(div(mulsin(X, Y), Z)) → snell3(X, Y, Z): saves 2 nodes (Snell's law)
+    if (node.kind == "unary" and node.value == "arcsin"
+            and node.children[0].kind == "binary" and node.children[0].value == "div"
+            and node.children[0].children[0].kind == "binary"
+            and node.children[0].children[0].value == "mulsin"):
+        X = node.children[0].children[0].children[0]
+        Y = node.children[0].children[0].children[1]
+        Z = node.children[0].children[1]
+        return Node("ternary", "snell3", [X, Y, Z])
+
+    # arcsin(div(mul(X, sin(Y)), Z)) → snell3(X, Y, Z): saves 2 nodes (Snell's law, unsimplified)
+    if (node.kind == "unary" and node.value == "arcsin"
+            and node.children[0].kind == "binary" and node.children[0].value == "div"
+            and node.children[0].children[0].kind == "binary"
+            and node.children[0].children[0].value == "mul"
+            and node.children[0].children[0].children[1].kind == "unary"
+            and node.children[0].children[0].children[1].value == "sin"):
+        X = node.children[0].children[0].children[0]
+        Y = node.children[0].children[0].children[1].children[0]
+        Z = node.children[0].children[1]
+        return Node("ternary", "snell3", [X, Y, Z])
+
+    # mul(sqover(X, Z), sin2(Y)) → projrange(X, Y, Z): saves 2 nodes (projectile range)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "binary" and node.children[0].value == "sqover"
+            and node.children[1].kind == "unary" and node.children[1].value == "sin2"):
+        X = node.children[0].children[0]
+        Z = node.children[0].children[1]
+        Y = node.children[1].children[0]
+        return Node("ternary", "projrange", [X, Y, Z])
+
+    # mul(sin2(Y), sqover(X, Z)) → projrange(X, Y, Z): saves 2 nodes (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "sin2"
+            and node.children[1].kind == "binary" and node.children[1].value == "sqover"):
+        Y = node.children[0].children[0]
+        X = node.children[1].children[0]
+        Z = node.children[1].children[1]
+        return Node("ternary", "projrange", [X, Y, Z])
+
+    # divsq(mul(X, Y), Z) → mdivsq(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "divsq"
+            and node.children[0].kind == "binary" and node.children[0].value == "mul"):
+        return Node("ternary", "mdivsq",
+                     [node.children[0].children[0], node.children[0].children[1], node.children[1]])
+
+    # sqrtdiv(mul(X, Y), Z) → msqrtdiv(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "sqrtdiv"
+            and node.children[0].kind == "binary" and node.children[0].value == "mul"):
+        return Node("ternary", "msqrtdiv",
+                     [node.children[0].children[0], node.children[0].children[1], node.children[1]])
+
     # Constant folding: binary op on two constants
     if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
         try:
@@ -1367,6 +1416,17 @@ def simplify(node: Node) -> Node:
             a, b, c = node.children[0].value, node.children[1].value, node.children[2].value
             op_fn = TERNARY_OPS[node.value]
             result = float(op_fn(np.array([a]), np.array([b]), np.array([c]))[0])
+            if np.isfinite(result):
+                return Node("const", result)
+        except Exception:
+            pass
+
+    # Constant folding: quaternary op on four constants
+    if (node.kind == "quaternary" and all(c.kind == "const" for c in node.children)):
+        try:
+            vals = [c.value for c in node.children]
+            op_fn = QUATERNARY_OPS[node.value]
+            result = float(op_fn(*[np.array([v]) for v in vals])[0])
             if np.isfinite(result):
                 return Node("const", result)
         except Exception:
