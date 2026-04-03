@@ -75,6 +75,9 @@ BINARY_OPS: dict[str, callable] = {
     "sqover": lambda x, y: x**2 / np.where(np.abs(y) > 1e-10, y, 1e-10),
     "divsq": lambda x, y: np.where(np.abs(y) > 1e-10, x / y**2, 0.0),
     "sqrtdiv": lambda x, y: np.sqrt(np.abs(np.where(np.abs(y) > 1e-10, x / y, 0.0))),
+    "mulsin": lambda x, y: x * np.sin(y),
+    "mulcos": lambda x, y: x * np.cos(y),
+    "mulnegexp": lambda x, y: x * np.where(y > -100, np.exp(-y), 0.0),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -97,6 +100,7 @@ UNARY_OPS: dict[str, callable] = {
     "lj": lambda x: x ** 12 - x ** 6,
     "morse": lambda x: (1.0 - np.where(x > -100, np.exp(-x), 0.0)) ** 2,
     "sinpi": lambda x: np.sin(np.pi * x),
+    "sin2": lambda x: np.sin(2.0 * x),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -315,12 +319,11 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_bin("mul", rv(),
                     _make_bin("sub", rv(), rv())))))
 
-    # Template 24: v1 * negexp(v2 / (v3 * v4)) — RC circuit / Boltzmann (compact)
+    # Template 24: mulnegexp(v1, v2 / (v3 * v4)) — RC circuit / Boltzmann (compact)
     if n >= 3:
-        templates.append(_make_bin("mul", rv(),
-            _make_un("negexp",
-                _make_bin("div", rv(),
-                    _make_bin("mul", rv(), rv())))))
+        templates.append(_make_bin("mulnegexp", rv(),
+            _make_bin("div", rv(),
+                _make_bin("mul", rv(), rv()))))
 
     # Template 25: negexp(v1 / (v2 * v3)) — Boltzmann factor (compact)
     if n >= 2:
@@ -496,21 +499,21 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("mul", _v(a),
                     _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
 
-            # eq38 Projectile Range: sqover(a, c)*sin(2*b)  [v²*sin(2θ)/g] — compact (8 nodes vs 9)
+            # eq38 Projectile Range: sqover(a, c)*sin2(b)  [v²*sin(2θ)/g] — compact (6 nodes vs 9)
             templates.append(
                 _make_bin("mul",
                     _make_bin("sqover", _v(a), _v(c)),
-                    _make_un("sin", _make_bin("mul", _c(2.0), _v(b)))))
+                    _make_un("sin2", _v(b))))
 
-            # eq33 Simple Harmonic Motion: a*sin(b*c)  [A*sin(omega*t)]
+            # eq33 Simple Harmonic Motion: mulsin(a, b*c)  [A*sin(omega*t)] — compact (5 nodes vs 6)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("sin", _make_bin("mul", _v(b), _v(c)))))
+                _make_bin("mulsin", _v(a),
+                    _make_bin("mul", _v(b), _v(c))))
 
-            # eq39 Radioactive Decay: a*negexp(b*c)  [N0*exp(-lambda*t)] — compact (6 nodes vs 7)
+            # eq39 Radioactive Decay: mulnegexp(a, b*c)  [N0*exp(-lambda*t)] — compact (5 nodes vs 7)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("negexp", _make_bin("mul", _v(b), _v(c)))))
+                _make_bin("mulnegexp", _v(a),
+                    _make_bin("mul", _v(b), _v(c))))
 
             # eq44 Boltzmann Distribution: negexp(a/(b*c))  [exp(-E/(k_B*T))] — compact (5 nodes vs 7)
             templates.append(
@@ -597,20 +600,18 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                                 _make_bin("mul", _v(b),
                                     _make_bin("sub", _v(c), _v(d))))))))
 
-            # eq49 Pendulum: a*cos(sqrtdiv(b,c)*d) — compact (8 nodes vs 9)
+            # eq49 Pendulum: mulcos(a, sqrtdiv(b,c)*d) — compact (7 nodes vs 9)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("cos",
-                        _make_bin("mul",
-                            _make_bin("sqrtdiv", _v(b), _v(c)),
-                            _v(d)))))
+                _make_bin("mulcos", _v(a),
+                    _make_bin("mul",
+                        _make_bin("sqrtdiv", _v(b), _v(c)),
+                        _v(d))))
 
-            # eq43 RC Circuit: a*negexp(b/(c*d)) — compact (8 nodes vs 9)
+            # eq43 RC Circuit: mulnegexp(a, b/(c*d)) — compact (7 nodes vs 9)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("negexp",
-                        _make_bin("div", _v(b),
-                            _make_bin("mul", _v(c), _v(d))))))
+                _make_bin("mulnegexp", _v(a),
+                    _make_bin("div", _v(b),
+                        _make_bin("mul", _v(c), _v(d)))))
 
             # eq48 Morse: a*morse(b*(c-d)) where morse(x)=(1-exp(-x))^2 — compact (8 nodes vs 11)
             templates.append(
@@ -635,11 +636,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                             _v(d)))))
 
             # --- Algebraic templates for tier 1-2 ---
-            # eq42 Magnetic Force: q*v*B*sin(theta) = a*b*c*sin(d)
+            # eq42 Magnetic Force: mulsin(a*b*c, d) = a*b*c*sin(d) — compact (7 nodes vs 8)
             templates.append(
-                _make_bin("mul",
+                _make_bin("mulsin",
                     _make_bin("mul", _v(a), _make_bin("mul", _v(b), _v(c))),
-                    _make_un("sin", _v(d))))
+                    _v(d)))
 
             # eq22 Drag ½*Cd*rho*A*v²: mulsq(a*b*c, d) — compact (7 nodes vs 8)
             templates.append(
@@ -1136,6 +1137,52 @@ def simplify(node: Node) -> Node:
             and node.children[0].kind == "binary" and node.children[0].value == "div"):
         return Node("binary", "sqrtdiv",
                      [node.children[0].children[0], node.children[0].children[1]])
+
+    # sin(mul(2, x)) or sin(mul(x, 2)) → sin2(x): saves 2 nodes
+    if (node.kind == "unary" and node.value == "sin"
+            and node.children[0].kind == "binary" and node.children[0].value == "mul"):
+        left = node.children[0].children[0]
+        right = node.children[0].children[1]
+        if left.kind == "const" and abs(left.value - 2.0) < 1e-6:
+            return Node("unary", "sin2", [right])
+        if right.kind == "const" and abs(right.value - 2.0) < 1e-6:
+            return Node("unary", "sin2", [left])
+
+    # mul(X, sin(Y)) → mulsin(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "sin"):
+        return Node("binary", "mulsin",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(sin(Y), X) → mulsin(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "sin"):
+        return Node("binary", "mulsin",
+                     [node.children[1], node.children[0].children[0]])
+
+    # mul(X, cos(Y)) → mulcos(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "cos"):
+        return Node("binary", "mulcos",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(cos(Y), X) → mulcos(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "cos"):
+        return Node("binary", "mulcos",
+                     [node.children[1], node.children[0].children[0]])
+
+    # mul(X, negexp(Y)) → mulnegexp(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "negexp"):
+        return Node("binary", "mulnegexp",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(negexp(Y), X) → mulnegexp(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "negexp"):
+        return Node("binary", "mulnegexp",
+                     [node.children[1], node.children[0].children[0]])
 
     # add(sin(x), sin(add(x, y))) → sumshift(x, y): saves 6 nodes (wave superposition)
     if (node.kind == "binary" and node.value == "add"
