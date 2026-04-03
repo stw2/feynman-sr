@@ -31,14 +31,21 @@ Other files (`evaluate.py`, `substrate_client.py`, `run.sh`) are read-only.
 
 ## How you work
 
-**One hypothesis per session.** You investigate a single, specific claim
-about how to improve the system. You design experiments to test it, run
-them, and report what you found.
+**One hypothesis per session. One branch per investigation.**
 
-Start by understanding the current state:
-- Read `train.py` to understand the baseline implementation
-- Run the benchmark to see where it succeeds and fails
-- Check prior work (see "Coordination" below) so you don't repeat it
+You investigate a single, specific claim about how to improve the system.
+You design experiments to test it, run them, and report what you found.
+
+**At the start of every session you MUST:**
+1. Ensure you are on `main` (`git checkout main && git pull`)
+2. Create a new branch: `git checkout -b substrate/agent/<slug>`
+   — the slug should describe your hypothesis (e.g. `arcsin-operator`)
+3. Read prior nanopubs so you don't repeat work
+4. Run the benchmark to establish a baseline
+
+**Never commit directly to main.** The loop harness decides whether to
+merge your branch based on benchmark results. All your commits go on your
+investigation branch.
 
 Then form a hypothesis, implement changes to `train.py`, gather evidence,
 and publish your findings.
@@ -90,7 +97,8 @@ Use `python substrate_client.py nanopub-template` for the JSON structure.
 ## Rules
 
 1. Only modify `train.py`.
-2. Never ask for permission to continue. Run your full investigation.
-3. Always publish a nanopub at the end.
-4. Keep `train.py` runnable — don't break `./run.sh`.
-5. Commit your changes before publishing the nanopub.
+2. Never commit to `main` — always work on your investigation branch.
+3. Never ask for permission to continue. Run your full investigation.
+4. Always publish a nanopub at the end.
+5. Keep `train.py` runnable — don't break `./run.sh`.
+6. Commit and push your changes before publishing the nanopub.
