@@ -67,6 +67,7 @@ BINARY_OPS: dict[str, callable] = {
     "sub": lambda x, y: x - y,
     "mul": lambda x, y: x * y,
     "div": lambda x, y: np.where(np.abs(y) > 1e-10, x / y, 0.0),
+    "hypot": lambda x, y: np.sqrt(x**2 + y**2),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -80,6 +81,8 @@ UNARY_OPS: dict[str, callable] = {
     "arcsin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
     "cube": lambda x: x ** 3,
     "inv": lambda x: np.where(np.abs(x) > 1e-10, 1.0 / x, 0.0),
+    "expm1": lambda x: np.where(x < 100, np.expm1(x), np.exp(np.float64(100))),
+    "sigmoid": lambda x: 1.0 / (1.0 + np.exp(-np.clip(x, -100, 100))),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -234,9 +237,9 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
         templates.append(_make_bin("mul", rv(),
             _make_un("cos", _make_bin("mul", rv(), rv()))))
 
-    # Template 12: 1 / (exp(v1) - 1) — Planck/Bose-Einstein
+    # Template 12: 1 / expm1(v1) — Planck/Bose-Einstein (compact)
     templates.append(_make_bin("div", _make_const(1.0),
-        _make_bin("sub", _make_un("exp", rv()), _make_const(1.0))))
+        _make_un("expm1", rv())))
 
     # Template 13: v1^2 * sin(c * v2) / v3 — projectile range pattern
     if n >= 2:
@@ -250,10 +253,8 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
         _make_bin("sub", _make_const(1.0),
             _make_un("exp", _make_bin("mul", rc(), rv())))))
 
-    # Template 15: 1 / (1 + exp(c * v1)) — logistic/sigmoid
-    templates.append(_make_bin("div", _make_const(1.0),
-        _make_bin("add", _make_const(1.0),
-            _make_un("exp", _make_bin("mul", rc(), rv())))))
+    # Template 15: sigmoid(c * v1) — logistic/sigmoid (compact)
+    templates.append(_make_un("sigmoid", _make_bin("mul", rc(), rv())))
 
     # Template 16: exp(-square(v1) / v2) — Gaussian-like
     templates.append(_make_un("exp",
@@ -305,14 +306,12 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                             _make_bin("mul", rv(),
                                 _make_bin("sub", rv(), rv()))))))))
 
-    # Template 23: v1 / (1 + exp(-v2 * (v3 - v4))) — logistic growth (deep)
+    # Template 23: v1 * sigmoid(v2 * (v3 - v4)) — logistic growth (compact)
     if n >= 3:
-        templates.append(_make_bin("div", rv(),
-            _make_bin("add", _make_const(1.0),
-                _make_un("exp",
-                    _make_un("neg",
-                        _make_bin("mul", rv(),
-                            _make_bin("sub", rv(), rv())))))))
+        templates.append(_make_bin("mul", rv(),
+            _make_un("sigmoid",
+                _make_bin("mul", rv(),
+                    _make_bin("sub", rv(), rv())))))
 
     # Template 24: v1 * exp(-v2 / (v3 * v4)) — RC circuit / Boltzmann
     if n >= 3:
@@ -372,19 +371,15 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_un("cos",
                     _make_bin("add", _make_bin("mul", rv(), rv()), rv())))))
 
-    # Template 31: v1 / (exp(v1/v2) - 1) — Planck with variable numerator
+    # Template 31: v1 / expm1(v1/v2) — Planck with variable numerator (compact)
     if n >= 2:
         templates.append(_make_bin("div", rv(),
-            _make_bin("sub",
-                _make_un("exp", _make_bin("div", rv(), rv())),
-                _make_const(1.0))))
+            _make_un("expm1", _make_bin("div", rv(), rv()))))
 
-    # Template 32: v1 / (exp(v2/v3) - 1) — general Planck
+    # Template 32: v1 / expm1(v2/v3) — general Planck (compact)
     if n >= 2:
         templates.append(_make_bin("div", rv(),
-            _make_bin("sub",
-                _make_un("exp", _make_bin("div", rv(), rv())),
-                _make_const(1.0))))
+            _make_un("expm1", _make_bin("div", rv(), rv()))))
 
     return templates
 
@@ -408,10 +403,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
 
     if n == 1:
         v0 = V[0]
-        # eq40 Planck simplified: x^3/(exp(x)-1)
+        # eq40 Planck simplified: x^3/expm1(x) — compact form (5 nodes vs 7)
         templates.append(_make_bin("div",
             _make_un("cube", _v(v0)),
-            _make_bin("sub", _make_un("exp", _v(v0)), _c(1.0))))
+            _make_un("expm1", _v(v0))))
 
     if n == 2:
         for perm in itertools.permutations(V):
@@ -422,12 +417,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_un("sqrt",
                         _make_bin("sub", _c(1.0), _make_un("square", _v(b))))))
 
-            # eq50 Blackbody Peak (Wien): a/(exp(a/b)-1)
+            # eq50 Blackbody Peak (Wien): a/expm1(a/b) — compact (6 nodes vs 8)
             templates.append(
                 _make_bin("div", _v(a),
-                    _make_bin("sub",
-                        _make_un("exp", _make_bin("div", _v(a), _v(b))),
-                        _c(1.0))))
+                    _make_un("expm1", _make_bin("div", _v(a), _v(b)))))
 
             # eq24 Pendulum Period: sqrt(a/b)  [2π*sqrt(l/g)]
             templates.append(
@@ -490,14 +483,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul", _v(a), _make_un("sin", _v(b))),
                         _v(c))))
 
-            # eq37 Cosine Rule: sqrt((a-b*cos(c))²+(b*sin(c))²) — equivalent, 1 fewer node
+            # eq37 Cosine Rule: hypot(a-b*cos(c), b*sin(c)) — compact (11 nodes vs 14)
             templates.append(
-                _make_un("sqrt",
-                    _make_bin("add",
-                        _make_un("square",
-                            _make_bin("sub", _v(a), _make_bin("mul", _v(b), _make_un("cos", _v(c))))),
-                        _make_un("square",
-                            _make_bin("mul", _v(b), _make_un("sin", _v(c)))))))
+                _make_bin("hypot",
+                    _make_bin("sub", _v(a), _make_bin("mul", _v(b), _make_un("cos", _v(c)))),
+                    _make_bin("mul", _v(b), _make_un("sin", _v(c)))))
 
             # eq30 Relativistic Energy: a*square(c)/sqrt(1-square(b/c))  [mc²/sqrt(1-v²/c²)]
             templates.append(
@@ -612,14 +602,12 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_un("sin",
                             _make_bin("add", _make_bin("mul", _v(c), _v(d)), _v(b))))))
 
-            # eq47 Logistic: a/(1+exp(-b*(c-d)))
+            # eq47 Logistic: a*sigmoid(b*(c-d)) — compact (8 nodes vs 11)
             templates.append(
-                _make_bin("div", _v(a),
-                    _make_bin("add", _c(1.0),
-                        _make_un("exp",
-                            _make_un("neg",
-                                _make_bin("mul", _v(b),
-                                    _make_bin("sub", _v(c), _v(d))))))))
+                _make_bin("mul", _v(a),
+                    _make_un("sigmoid",
+                        _make_bin("mul", _v(b),
+                            _make_bin("sub", _v(c), _v(d))))))
 
             # eq48 Morse: a*(1-exp(-b*(c-d)))^2
             templates.append(
@@ -1013,6 +1001,36 @@ def simplify(node: Node) -> Node:
         return Node("unary", node.children[0].value,
                      [Node("binary", "div",
                            [node.children[0].children[0], node.children[1].children[0]])])
+
+    # sub(exp(x), 1) → expm1(x): saves 2 nodes
+    if (node.kind == "binary" and node.value == "sub"
+            and node.children[0].kind == "unary" and node.children[0].value == "exp"
+            and node.children[1].kind == "const" and node.children[1].value == 1.0):
+        return Node("unary", "expm1", [node.children[0].children[0]])
+
+    # sqrt(add(square(x), square(y))) → hypot(x, y): saves 3 nodes
+    if (node.kind == "unary" and node.value == "sqrt"
+            and node.children[0].kind == "binary" and node.children[0].value == "add"
+            and node.children[0].children[0].kind == "unary"
+            and node.children[0].children[0].value == "square"
+            and node.children[0].children[1].kind == "unary"
+            and node.children[0].children[1].value == "square"):
+        return Node("binary", "hypot",
+                     [node.children[0].children[0].children[0],
+                      node.children[0].children[1].children[0]])
+
+    # div(1, add(1, exp(neg(x)))) → sigmoid(x): saves 4 nodes
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[0].kind == "const" and node.children[0].value == 1.0
+            and node.children[1].kind == "binary" and node.children[1].value == "add"
+            and node.children[1].children[0].kind == "const"
+            and node.children[1].children[0].value == 1.0
+            and node.children[1].children[1].kind == "unary"
+            and node.children[1].children[1].value == "exp"
+            and node.children[1].children[1].children[0].kind == "unary"
+            and node.children[1].children[1].children[0].value == "neg"):
+        return Node("unary", "sigmoid",
+                     [node.children[1].children[1].children[0].children[0]])
 
     # Constant folding: binary op on two constants
     if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
