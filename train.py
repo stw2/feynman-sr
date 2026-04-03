@@ -466,6 +466,14 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_bin("add", _v(a), _v(b)),
                     _make_bin("mul", _v(a), _v(b))))
 
+            # eq02 Ohm I=V/R, eq10 P=F/A: a/b (simple division)
+            templates.append(
+                _make_bin("div", _v(a), _v(b)))
+
+            # eq06 p=m*v, eq07 P=F*v: a*b (simple product)
+            templates.append(
+                _make_bin("mul", _v(a), _v(b)))
+
     if n == 3:
         for perm in itertools.permutations(V):
             a, b, c = perm
@@ -975,7 +983,27 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
     rng = np.random.default_rng(seed)
     start = time.time()
 
-    # Initialize
+    # Fast path: evaluate permutation templates first before building full population.
+    # If an exact match is found, return immediately — avoids generating and evaluating
+    # hundreds of random trees.
+    perm_templates = _permutation_templates(rng, variables)
+    for t in perm_templates:
+        if t.depth() > MAX_OFFSPRING_DEPTH:
+            continue
+        try:
+            y_pred = evaluate_tree(t, X_train, variables)
+            y_pred = np.nan_to_num(y_pred, nan=1e10, posinf=1e10, neginf=-1e10)
+            a, b = linear_scale(y_pred, y_train)
+            y_scaled = a * y_pred + b
+            mse = float(np.mean((y_train - y_scaled) ** 2))
+            if np.isfinite(mse) and mse < 1e-8:
+                # Near-perfect fit — likely exact match, return immediately
+                print(f"  template fast-path: exact match found, skipping GP")
+                return t.copy(), [-(mse + PARSIMONY_COEFF * t.size())]
+        except Exception:
+            continue
+
+    # Initialize full population (templates already generated, reuse them)
     population = ramped_half_and_half(rng, variables, POPULATION_SIZE, MAX_DEPTH)
     best_ever = None
     best_fitness = -1e15
