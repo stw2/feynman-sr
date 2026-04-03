@@ -41,11 +41,15 @@ POPULATION_SIZE = 500
 GENERATIONS = 80
 TOURNAMENT_SIZE = 7
 MAX_DEPTH = 6
-CROSSOVER_PROB = 0.7
-MUTATION_PROB = 0.2
-REPRODUCTION_PROB = 0.1
+CROSSOVER_PROB = 0.60
+SUBTREE_MUTATION_PROB = 0.12
+POINT_MUTATION_PROB = 0.10
+CONST_PERTURB_PROB = 0.10
+REPRODUCTION_PROB = 0.08
 PARSIMONY_COEFF = 0.001  # penalize large trees
 ELITISM = 5  # top-N individuals survive unchanged
+LOCAL_SEARCH_TOP_N = 10  # apply local search to top-N individuals per generation
+LOCAL_SEARCH_ITERS = 5   # number of local search attempts per individual
 TIME_BUDGET_PER_EQ = 120  # seconds per equation
 
 # ============================================================================
@@ -262,6 +266,97 @@ def mutate(rng: np.random.Generator, tree: Node, variables: list[str],
     return result
 
 
+def point_mutate(rng: np.random.Generator, tree: Node, variables: list[str]) -> Node:
+    """Point mutation: change a single node's operator or value without altering tree structure."""
+    mutant = tree.copy()
+    nodes = _collect_nodes(mutant)
+    target = rng.choice(nodes)
+
+    if target.kind == "binary":
+        # Swap to a different binary operator
+        ops = [op for op in BINARY_OPS.keys() if op != target.value]
+        if ops:
+            target.value = rng.choice(ops)
+    elif target.kind == "unary":
+        # Swap to a different unary operator
+        ops = [op for op in UNARY_OPS.keys() if op != target.value]
+        if ops:
+            target.value = rng.choice(ops)
+    elif target.kind == "const":
+        # Replace with a different constant
+        nice = [0.5, 1.0, 2.0, 3.0, -1.0, np.pi, np.e, 0.0, -0.5, 4.0]
+        if rng.random() < 0.5:
+            target.value = float(rng.choice(nice))
+        else:
+            target.value = float(rng.uniform(*ERC_RANGE))
+    elif target.kind == "var":
+        # Swap to a different variable (or a constant)
+        if rng.random() < 0.3 and len(variables) > 1:
+            others = [v for v in variables if v != target.value]
+            if others:
+                target.value = rng.choice(others)
+        # else keep same variable
+
+    return mutant
+
+
+def constant_perturb(rng: np.random.Generator, tree: Node) -> Node:
+    """Perturb constants in the tree by small amounts, sometimes snapping to nice values."""
+    mutant = tree.copy()
+    nodes = _collect_nodes(mutant)
+    const_nodes = [n for n in nodes if n.kind == "const"]
+    if not const_nodes:
+        return mutant
+
+    nice_constants = [0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, -1.0, -2.0,
+                      np.pi, 2*np.pi, np.e, 0.25, 1/3]
+
+    for node in const_nodes:
+        if rng.random() < 0.5:  # perturb each constant with 50% probability
+            r = rng.random()
+            if r < 0.2:
+                # Snap to nearest nice constant
+                dists = [abs(node.value - nc) for nc in nice_constants]
+                nearest = nice_constants[np.argmin(dists)]
+                if dists[np.argmin(dists)] < 1.0:  # only snap if close
+                    node.value = float(nearest)
+            elif r < 0.4:
+                # Replace with a random nice constant
+                node.value = float(rng.choice(nice_constants))
+            elif abs(node.value) < 1e-10:
+                node.value = float(rng.normal(0, 0.1))
+            else:
+                # Multiplicative perturbation: scale by 0.85 to 1.15
+                node.value = float(node.value * rng.uniform(0.85, 1.15))
+
+    return mutant
+
+
+def local_search(rng: np.random.Generator, tree: Node, X: np.ndarray,
+                  y: np.ndarray, var_names: list[str],
+                  n_iters: int = LOCAL_SEARCH_ITERS) -> Node:
+    """Hill-climbing local search: try point mutations and constant perturbations, keep improvements."""
+    best = tree.copy()
+    best_fit = fitness(best, X, y, var_names)
+
+    for _ in range(n_iters):
+        # Try point mutation
+        candidate = point_mutate(rng, best, var_names)
+        cand_fit = fitness(candidate, X, y, var_names)
+        if cand_fit > best_fit:
+            best = candidate
+            best_fit = cand_fit
+
+        # Try constant perturbation
+        candidate = constant_perturb(rng, best)
+        cand_fit = fitness(candidate, X, y, var_names)
+        if cand_fit > best_fit:
+            best = candidate
+            best_fit = cand_fit
+
+    return best
+
+
 def tournament_select(rng: np.random.Generator, population: list[Node],
                       fitnesses: list[float], k: int) -> Node:
     """Tournament selection."""
@@ -296,6 +391,17 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
         # Evaluate
         fitnesses = [fitness(ind, X_train, y_train, variables) for ind in population]
 
+        # Local search on top-N individuals (memetic/Lamarckian learning)
+        if gen > 0 and gen % 5 == 0:  # every 5 generations to save time
+            top_indices = sorted(range(len(fitnesses)),
+                                 key=lambda i: fitnesses[i], reverse=True)[:LOCAL_SEARCH_TOP_N]
+            for idx in top_indices:
+                improved = local_search(rng, population[idx], X_train, y_train, variables)
+                imp_fit = fitness(improved, X_train, y_train, variables)
+                if imp_fit > fitnesses[idx]:
+                    population[idx] = improved
+                    fitnesses[idx] = imp_fit
+
         # Track best
         gen_best_idx = max(range(len(fitnesses)), key=lambda i: fitnesses[i])
         if fitnesses[gen_best_idx] > best_fitness:
@@ -318,16 +424,36 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
         for idx in elite_indices:
             next_pop.append(population[idx].copy())
 
+        # Adaptive operator scheduling: explore early, exploit later
+        progress = gen / max(1, GENERATIONS - 1)  # 0.0 → 1.0
+        # Crossover decreases, point mutation and const perturbation increase
+        cx_prob = CROSSOVER_PROB + 0.10 * (1.0 - progress)   # 0.70 → 0.60
+        sm_prob = SUBTREE_MUTATION_PROB                        # constant 0.12
+        pm_prob = POINT_MUTATION_PROB + 0.08 * progress        # 0.10 → 0.18
+        cp_prob = CONST_PERTURB_PROB + 0.07 * progress         # 0.10 → 0.17
+        # Normalize
+        total_p = cx_prob + sm_prob + pm_prob + cp_prob + REPRODUCTION_PROB
+        cx_prob /= total_p
+        sm_prob /= total_p
+        pm_prob /= total_p
+        cp_prob /= total_p
+
         # Fill rest via genetic operators
         while len(next_pop) < POPULATION_SIZE:
             r = rng.random()
-            if r < CROSSOVER_PROB:
+            if r < cx_prob:
                 p1 = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
                 p2 = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
                 child = crossover(rng, p1, p2, MAX_DEPTH)
-            elif r < CROSSOVER_PROB + MUTATION_PROB:
+            elif r < cx_prob + sm_prob:
                 parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
                 child = mutate(rng, parent, variables, MAX_DEPTH)
+            elif r < cx_prob + sm_prob + pm_prob:
+                parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
+                child = point_mutate(rng, parent, variables)
+            elif r < cx_prob + sm_prob + pm_prob + cp_prob:
+                parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
+                child = constant_perturb(rng, parent)
             else:
                 child = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE).copy()
             next_pop.append(child)
