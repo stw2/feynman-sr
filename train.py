@@ -155,6 +155,13 @@ UNARY_OPS: dict[str, callable] = {
                                   x**3 / np.where(x < 100, np.expm1(x), np.exp(np.float64(100))), 0.0),
 }
 
+# Core operator subsets for GP random tree generation and mutation.
+# The full operator dicts above remain for templates, evaluation, and simplification.
+# Restricting GP search to core ops reduces the search space from 72 to 13 operators,
+# improving discovery rate when templates fail to match.
+GP_BINARY_OPS = ["add", "sub", "mul", "div"]
+GP_UNARY_OPS = ["neg", "square", "sqrt", "sin", "cos", "exp", "log", "inv", "negexp"]
+
 # Constant range for ephemeral random constants (ERC)
 ERC_RANGE = (-5.0, 5.0)
 ERC_PROB = 0.3  # probability a leaf is a constant vs. a variable
@@ -219,27 +226,15 @@ def random_tree(rng: np.random.Generator, variables: list[str],
         else:
             return Node("var", rng.choice(variables))
 
-    # Internal node: unary, binary, or ternary
+    # Internal node: only core operators (GP_BINARY_OPS, GP_UNARY_OPS)
+    # Specialized/compound operators are introduced via templates and simplification rules
     r = rng.random()
-    if UNARY_OPS and r < 0.3:
-        op = rng.choice(list(UNARY_OPS.keys()))
+    if GP_UNARY_OPS and r < 0.3:
+        op = rng.choice(GP_UNARY_OPS)
         child = random_tree(rng, variables, max_depth - 1, method)
         return Node("unary", op, [child])
-    elif TERNARY_OPS and r < 0.35:
-        op = rng.choice(list(TERNARY_OPS.keys()))
-        a = random_tree(rng, variables, max_depth - 1, method)
-        b = random_tree(rng, variables, max_depth - 1, method)
-        c = random_tree(rng, variables, max_depth - 1, method)
-        return Node("ternary", op, [a, b, c])
-    elif QUATERNARY_OPS and r < 0.38:
-        op = rng.choice(list(QUATERNARY_OPS.keys()))
-        a = random_tree(rng, variables, max_depth - 1, method)
-        b = random_tree(rng, variables, max_depth - 1, method)
-        c = random_tree(rng, variables, max_depth - 1, method)
-        d = random_tree(rng, variables, max_depth - 1, method)
-        return Node("quaternary", op, [a, b, c, d])
     else:
-        op = rng.choice(list(BINARY_OPS.keys()))
+        op = rng.choice(GP_BINARY_OPS)
         left = random_tree(rng, variables, max_depth - 1, method)
         right = random_tree(rng, variables, max_depth - 1, method)
         return Node("binary", op, [left, right])
@@ -808,23 +803,23 @@ def point_mutate(rng: np.random.Generator, tree: Node, variables: list[str]) -> 
     target = rng.choice(nodes)
 
     if target.kind == "quaternary":
-        # Swap to a different quaternary operator
+        # Keep quaternary ops from templates intact (swap within full set)
         ops = [op for op in QUATERNARY_OPS.keys() if op != target.value]
         if ops:
             target.value = rng.choice(ops)
     elif target.kind == "ternary":
-        # Swap to a different ternary operator
+        # Keep ternary ops from templates intact (swap within full set)
         ops = [op for op in TERNARY_OPS.keys() if op != target.value]
         if ops:
             target.value = rng.choice(ops)
     elif target.kind == "binary":
-        # Swap to a different binary operator
-        ops = [op for op in BINARY_OPS.keys() if op != target.value]
+        # Use core binary ops for mutation to keep search space focused
+        ops = [op for op in GP_BINARY_OPS if op != target.value]
         if ops:
             target.value = rng.choice(ops)
     elif target.kind == "unary":
-        # Swap to a different unary operator
-        ops = [op for op in UNARY_OPS.keys() if op != target.value]
+        # Use core unary ops for mutation to keep search space focused
+        ops = [op for op in GP_UNARY_OPS if op != target.value]
         if ops:
             target.value = rng.choice(ops)
     elif target.kind == "const":
