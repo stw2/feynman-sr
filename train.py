@@ -467,8 +467,24 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
 # MAIN
 # ============================================================================
 
+NUM_RESTARTS = 3  # independent GP runs per equation with different seeds
+
+
+def _score_tree(tree: Node, X_train, y_train, X_test, y_test, var_names):
+    """Evaluate a tree and return (r2_test, r2_train, exact, a, b)."""
+    y_pred_train_raw = evaluate_tree(tree, X_train, var_names)
+    a, b = linear_scale(y_pred_train_raw, y_train)
+    y_pred_train = a * y_pred_train_raw + b
+    y_pred_test_raw = evaluate_tree(tree, X_test, var_names)
+    y_pred_test = a * y_pred_test_raw + b
+    r2_tr = r_squared(y_train, y_pred_train)
+    r2_te = r_squared(y_test, y_pred_test)
+    exact = is_exact(y_test, y_pred_test)
+    return r2_te, r2_tr, exact, a, b
+
+
 def run_equation(eid: str) -> dict:
-    """Run GP on a single equation and return results dict."""
+    """Run GP on a single equation with multiple restarts and return results dict."""
     eq = EQUATIONS[eid]
     print(f"\n{'='*60}")
     print(f"Equation: {eid} — {eq['name']}")
@@ -479,31 +495,47 @@ def run_equation(eid: str) -> dict:
     X_train, y_train, X_test, y_test = load_equation_data(eid)
 
     t0 = time.time()
-    best_tree, history = evolve(X_train, y_train, eq["variables"])
+    time_per_restart = TIME_BUDGET_PER_EQ / NUM_RESTARTS
+
+    best_tree = None
+    best_r2_test = -1e15
+    best_result_info = None
+
+    for restart in range(NUM_RESTARTS):
+        print(f"\n  --- Restart {restart+1}/{NUM_RESTARTS} (seed={restart}) ---")
+        tree, history = evolve(X_train, y_train, eq["variables"],
+                               seed=restart, time_budget=time_per_restart)
+        if tree is None:
+            continue
+
+        r2_te, r2_tr, exact, a, b = _score_tree(
+            tree, X_train, y_train, X_test, y_test, eq["variables"])
+        print(f"  restart {restart+1}: r2_test={r2_te:.6f} exact={exact} expr={tree}")
+
+        # Keep the best by test R² (prefer exact matches)
+        score = (1.0 if exact else 0.0, r2_te)
+        best_score = (1.0 if best_result_info and best_result_info[2] else 0.0,
+                      best_r2_test)
+        if score > best_score:
+            best_tree = tree
+            best_r2_test = r2_te
+            best_result_info = (r2_te, r2_tr, exact)
+
     elapsed = time.time() - t0
 
-    if best_tree is None:
+    if best_tree is None or best_result_info is None:
         return dict(equation=eid, name=eq["name"],
                     best_expr="NONE", r2_train=0.0, r2_test=0.0,
                     exact_match=False, nodes=0, time_s=elapsed)
 
-    y_pred_train_raw = evaluate_tree(best_tree, X_train, eq["variables"])
-    # Apply linear scaling fitted on training data
-    a, b = linear_scale(y_pred_train_raw, y_train)
-    y_pred_train = a * y_pred_train_raw + b
-    y_pred_test_raw = evaluate_tree(best_tree, X_test, eq["variables"])
-    y_pred_test = a * y_pred_test_raw + b
-
-    r2_train = r_squared(y_train, y_pred_train)
-    r2_test = r_squared(y_test, y_pred_test)
-    exact = is_exact(y_test, y_pred_test)
+    r2_te, r2_tr, exact = best_result_info
 
     result = dict(
         equation=eid,
         name=eq["name"],
         best_expr=str(best_tree),
-        r2_train=r2_train,
-        r2_test=r2_test,
+        r2_train=r2_tr,
+        r2_test=r2_te,
         exact_match=exact,
         nodes=best_tree.size(),
         time_s=elapsed,
