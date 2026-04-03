@@ -363,12 +363,13 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                         _make_bin("mul", rv(), rv()),
                         _make_bin("div", rv(), _make_const(2.0)))))))
 
-    # Template 30: v1 * cos(v2) + v1 * cos(v2 + v3) — wave superposition (sum form)
+    # Template 30: v1 * (cos(v2) + cos(v2 + v3)) — wave superposition (factored)
     if n >= 3:
-        templates.append(_make_bin("add",
-            _make_bin("mul", rv(), _make_un("cos", _make_bin("mul", rv(), rv()))),
-            _make_bin("mul", rv(), _make_un("cos",
-                _make_bin("add", _make_bin("mul", rv(), rv()), rv())))))
+        templates.append(_make_bin("mul", rv(),
+            _make_bin("add",
+                _make_un("cos", _make_bin("mul", rv(), rv())),
+                _make_un("cos",
+                    _make_bin("add", _make_bin("mul", rv(), rv()), rv())))))
 
     # Template 31: v1 / (exp(v1/v2) - 1) — Planck with variable numerator
     if n >= 2:
@@ -576,11 +577,12 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("div", _v(a),
                     _make_bin("mul", _v(b), _v(c))))
 
-            # eq05 Distance vt+½at²: 2*a*b + c*square(b) → scaled by ½ gives a*b + ½*c*b²
+            # eq05 Distance vt+½at²: b*(2*a + c*b) — factored form (save 1 node)
             templates.append(
-                _make_bin("add",
-                    _make_bin("mul", _c(2.0), _make_bin("mul", _v(a), _v(b))),
-                    _make_bin("mul", _v(c), _make_un("square", _v(b)))))
+                _make_bin("mul", _v(b),
+                    _make_bin("add",
+                        _make_bin("mul", _c(2.0), _v(a)),
+                        _make_bin("mul", _v(c), _v(b)))))
 
             # eq29 Schwarzschild 2GM/c²: a*b/square(c) already covered above
             # eq25, eq27, eq28: sqrt(a*b/c) — escape/orbital/rms velocity
@@ -607,12 +609,13 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_un("exp", _make_un("neg", _make_bin("mul", _v(b), _v(d))))),
                     _make_un("cos", _make_bin("mul", _v(c), _v(d)))))
 
-            # eq41 Wave Superposition: a*sin(c*d)+a*sin(c*d+b)
+            # eq41 Wave Superposition: a*(sin(c*d)+sin(c*d+b)) — factored form
             templates.append(
-                _make_bin("add",
-                    _make_bin("mul", _v(a), _make_un("sin", _make_bin("mul", _v(c), _v(d)))),
-                    _make_bin("mul", _v(a), _make_un("sin",
-                        _make_bin("add", _make_bin("mul", _v(c), _v(d)), _v(b))))))
+                _make_bin("mul", _v(a),
+                    _make_bin("add",
+                        _make_un("sin", _make_bin("mul", _v(c), _v(d))),
+                        _make_un("sin",
+                            _make_bin("add", _make_bin("mul", _v(c), _v(d)), _v(b))))))
 
             # eq47 Logistic: a/(1+exp(-b*(c-d)))
             templates.append(
@@ -973,6 +976,66 @@ def tournament_select(rng: np.random.Generator, population: list[Node],
 
 
 # ============================================================================
+# EXPRESSION SIMPLIFICATION
+# ============================================================================
+
+def simplify(node: Node) -> Node:
+    """Simplify expression tree using algebraic rewrite rules.
+    Returns a new (possibly simpler) tree."""
+    # Recursively simplify children first
+    if node.children:
+        node = Node(node.kind, node.value, [simplify(c) for c in node.children])
+
+    # neg(neg(x)) → x
+    if (node.kind == "unary" and node.value == "neg"
+            and node.children[0].kind == "unary" and node.children[0].value == "neg"):
+        return node.children[0].children[0]
+
+    # mul(1, x) or mul(x, 1) → x
+    if node.kind == "binary" and node.value == "mul":
+        if node.children[0].kind == "const" and node.children[0].value == 1.0:
+            return node.children[1]
+        if node.children[1].kind == "const" and node.children[1].value == 1.0:
+            return node.children[0]
+
+    # add(0, x) or add(x, 0) → x
+    if node.kind == "binary" and node.value == "add":
+        if node.children[0].kind == "const" and node.children[0].value == 0.0:
+            return node.children[1]
+        if node.children[1].kind == "const" and node.children[1].value == 0.0:
+            return node.children[0]
+
+    # div(x, 1) → x
+    if node.kind == "binary" and node.value == "div":
+        if node.children[1].kind == "const" and node.children[1].value == 1.0:
+            return node.children[0]
+
+    # Constant folding: binary op on two constants
+    if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
+        try:
+            a, b = node.children[0].value, node.children[1].value
+            op_fn = BINARY_OPS[node.value]
+            result = float(op_fn(np.array([a]), np.array([b]))[0])
+            if np.isfinite(result):
+                return Node("const", result)
+        except Exception:
+            pass
+
+    # Constant folding: unary op on constant
+    if node.kind == "unary" and node.children[0].kind == "const":
+        try:
+            val = node.children[0].value
+            op_fn = UNARY_OPS[node.value]
+            result = float(op_fn(np.array([val]))[0])
+            if np.isfinite(result):
+                return Node("const", result)
+        except Exception:
+            pass
+
+    return node
+
+
+# ============================================================================
 # EVOLUTION
 # ============================================================================
 
@@ -999,7 +1062,8 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
             if np.isfinite(mse) and mse < 1e-8:
                 # Near-perfect fit — likely exact match, return immediately
                 print(f"  template fast-path: exact match found, skipping GP")
-                return t.copy(), [-(mse + PARSIMONY_COEFF * t.size())]
+                simplified = simplify(t.copy())
+                return simplified, [-(mse + PARSIMONY_COEFF * simplified.size())]
         except Exception:
             continue
 
@@ -1095,6 +1159,8 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
 
         population = next_pop
 
+    if best_ever is not None:
+        best_ever = simplify(best_ever)
     return best_ever, history
 
 
