@@ -31,6 +31,7 @@ import sys
 import time
 
 import numpy as np
+from scipy.optimize import minimize
 
 from evaluate import EQUATIONS, load_equation_data, r_squared, is_exact
 
@@ -41,8 +42,9 @@ POPULATION_SIZE = 500
 GENERATIONS = 80
 TOURNAMENT_SIZE = 7
 MAX_DEPTH = 6
-CROSSOVER_PROB = 0.7
-MUTATION_PROB = 0.2
+CROSSOVER_PROB = 0.6
+MUTATION_PROB = 0.15
+POINT_MUTATION_PROB = 0.15
 REPRODUCTION_PROB = 0.1
 PARSIMONY_COEFF = 0.001  # penalize large trees
 ELITISM = 5  # top-N individuals survive unchanged
@@ -210,6 +212,64 @@ def fitness(node: Node, X: np.ndarray, y: np.ndarray,
 
 
 # ============================================================================
+# CONSTANT OPTIMIZATION
+# ============================================================================
+
+def _collect_const_nodes(node: Node) -> list[Node]:
+    """Collect all constant-valued leaf nodes in the tree."""
+    consts = []
+    if node.kind == "const":
+        consts.append(node)
+    for c in node.children:
+        consts.extend(_collect_const_nodes(c))
+    return consts
+
+
+def optimize_constants(tree: Node, X: np.ndarray, y: np.ndarray,
+                       var_names: list[str], max_evals: int = 100) -> Node:
+    """Optimize all numeric constants in a tree via scipy L-BFGS-B.
+
+    Collects constant nodes, packs their values into a vector, and
+    minimizes MSE (with linear scaling) over those values.
+    Returns a new tree with optimized constants.
+    """
+    opt_tree = tree.copy()
+    const_nodes = _collect_const_nodes(opt_tree)
+    if not const_nodes:
+        return opt_tree
+
+    x0 = np.array([n.value for n in const_nodes], dtype=np.float64)
+
+    def objective(params):
+        for i, n in enumerate(const_nodes):
+            n.value = float(params[i])
+        try:
+            y_pred = evaluate_tree(opt_tree, X, var_names)
+            y_pred = np.nan_to_num(y_pred, nan=1e10, posinf=1e10, neginf=-1e10)
+            a, b = linear_scale(y_pred, y)
+            y_scaled = a * y_pred + b
+            mse = np.mean((y - y_scaled) ** 2)
+            if not np.isfinite(mse):
+                return 1e15
+            return mse
+        except Exception:
+            return 1e15
+
+    try:
+        result = minimize(objective, x0, method='Nelder-Mead',
+                          options={'maxfev': max_evals, 'xatol': 1e-8, 'fatol': 1e-10})
+        # Apply best params
+        for i, n in enumerate(const_nodes):
+            n.value = float(result.x[i])
+    except Exception:
+        # Restore original values on failure
+        for i, n in enumerate(const_nodes):
+            n.value = float(x0[i])
+
+    return opt_tree
+
+
+# ============================================================================
 # GENETIC OPERATORS
 # ============================================================================
 
@@ -262,6 +322,27 @@ def mutate(rng: np.random.Generator, tree: Node, variables: list[str],
     return result
 
 
+def point_mutate(rng: np.random.Generator, tree: Node, variables: list[str]) -> Node:
+    """Point mutation: change a single node's operator or value without altering structure."""
+    mutant = tree.copy()
+    nodes = _collect_nodes(mutant)
+    target = rng.choice(nodes)
+    if target.kind == "const":
+        # Perturb constant by small amount or replace with a nice constant
+        if rng.random() < 0.3:
+            nice = [0.5, 1.0, 2.0, 3.0, -1.0, -2.0, np.pi, np.e, 0.25, 4.0, 6.0]
+            target.value = float(rng.choice(nice))
+        else:
+            target.value *= (1.0 + rng.normal(0, 0.1))
+    elif target.kind == "var":
+        target.value = rng.choice(variables)
+    elif target.kind == "binary":
+        target.value = rng.choice(list(BINARY_OPS.keys()))
+    elif target.kind == "unary":
+        target.value = rng.choice(list(UNARY_OPS.keys()))
+    return mutant
+
+
 def tournament_select(rng: np.random.Generator, population: list[Node],
                       fitnesses: list[float], k: int) -> Node:
     """Tournament selection."""
@@ -274,51 +355,49 @@ def tournament_select(rng: np.random.Generator, population: list[Node],
 # EVOLUTION
 # ============================================================================
 
-def evolve(X_train: np.ndarray, y_train: np.ndarray,
-           variables: list[str], seed: int = 0,
-           time_budget: float = TIME_BUDGET_PER_EQ) -> tuple[Node, list[float]]:
-    """Run GP evolution. Returns (best_tree, fitness_history)."""
+def _single_evolve(X_train: np.ndarray, y_train: np.ndarray,
+                   variables: list[str], seed: int = 0,
+                   time_budget: float = 30.0) -> tuple[Node, float]:
+    """Run a single GP evolution pass. Returns (best_tree, best_fitness)."""
     rng = np.random.default_rng(seed)
     start = time.time()
 
-    # Initialize
     population = ramped_half_and_half(rng, variables, POPULATION_SIZE, MAX_DEPTH)
     best_ever = None
     best_fitness = -1e15
-    history = []
 
     for gen in range(GENERATIONS):
-        # Check time budget
         if time.time() - start > time_budget:
-            print(f"  time budget reached at generation {gen}")
             break
 
-        # Evaluate
         fitnesses = [fitness(ind, X_train, y_train, variables) for ind in population]
 
-        # Track best
         gen_best_idx = max(range(len(fitnesses)), key=lambda i: fitnesses[i])
         if fitnesses[gen_best_idx] > best_fitness:
             best_fitness = fitnesses[gen_best_idx]
             best_ever = population[gen_best_idx].copy()
 
-        history.append(best_fitness)
-
-        if gen % 10 == 0:
+        if gen % 20 == 0:
             print(f"  gen {gen:>3}: best_fitness={best_fitness:.6f}  "
                   f"best_size={best_ever.size() if best_ever else 0}  "
                   f"expr={best_ever}")
 
-        # Build next generation
         next_pop = []
 
-        # Elitism
+        # Elitism with periodic constant optimization
         elite_indices = sorted(range(len(fitnesses)),
                                key=lambda i: fitnesses[i], reverse=True)[:ELITISM]
-        for idx in elite_indices:
-            next_pop.append(population[idx].copy())
+        for rank, idx in enumerate(elite_indices):
+            elite_ind = population[idx].copy()
+            if gen % 10 == 0 and rank < 2:
+                if time.time() - start < time_budget - 5:
+                    elite_ind = optimize_constants(elite_ind, X_train, y_train, variables)
+                    opt_fit = fitness(elite_ind, X_train, y_train, variables)
+                    if opt_fit > best_fitness:
+                        best_fitness = opt_fit
+                        best_ever = elite_ind.copy()
+            next_pop.append(elite_ind)
 
-        # Fill rest via genetic operators
         while len(next_pop) < POPULATION_SIZE:
             r = rng.random()
             if r < CROSSOVER_PROB:
@@ -328,11 +407,55 @@ def evolve(X_train: np.ndarray, y_train: np.ndarray,
             elif r < CROSSOVER_PROB + MUTATION_PROB:
                 parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
                 child = mutate(rng, parent, variables, MAX_DEPTH)
+            elif r < CROSSOVER_PROB + MUTATION_PROB + POINT_MUTATION_PROB:
+                parent = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE)
+                child = point_mutate(rng, parent, variables)
             else:
                 child = tournament_select(rng, population, fitnesses, TOURNAMENT_SIZE).copy()
             next_pop.append(child)
 
         population = next_pop
+
+    return best_ever, best_fitness
+
+
+def evolve(X_train: np.ndarray, y_train: np.ndarray,
+           variables: list[str], seed: int = 0,
+           time_budget: float = TIME_BUDGET_PER_EQ) -> tuple[Node, list[float]]:
+    """Run GP with multiple restarts, keeping the best result.
+    Uses constant optimization on the final best tree."""
+    start = time.time()
+    best_ever = None
+    best_fitness = -1e15
+    history = []
+    run_idx = 0
+
+    while True:
+        elapsed = time.time() - start
+        remaining = time_budget - elapsed
+        if remaining < 5:
+            break
+
+        # Each run gets a portion of remaining time, at least 15s
+        per_run = max(15.0, min(remaining * 0.5, 30.0))
+        run_seed = seed + run_idx * 1000
+
+        print(f"\n  --- Restart {run_idx} (seed={run_seed}, budget={per_run:.0f}s) ---")
+        tree, fit = _single_evolve(X_train, y_train, variables,
+                                   seed=run_seed, time_budget=per_run)
+        history.append(fit)
+
+        if tree is not None and fit > best_fitness:
+            best_fitness = fit
+            best_ever = tree.copy()
+            print(f"  *** New best: fitness={best_fitness:.6f} expr={best_ever}")
+
+        run_idx += 1
+
+    # Final constant optimization with larger budget
+    if best_ever is not None:
+        best_ever = optimize_constants(best_ever, X_train, y_train, variables,
+                                       max_evals=500)
 
     return best_ever, history
 
