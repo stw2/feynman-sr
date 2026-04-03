@@ -78,6 +78,20 @@ BINARY_OPS: dict[str, callable] = {
     "mulsin": lambda x, y: x * np.sin(y),
     "mulcos": lambda x, y: x * np.cos(y),
     "mulnegexp": lambda x, y: x * np.where(y > -100, np.exp(-y), 0.0),
+    "mullorentz": lambda x, y: np.where(np.abs(1.0 - y**2) > 1e-10,
+                                         x / np.sqrt(np.abs(1.0 - y**2)), 0.0),
+    "mulmorse": lambda x, y: x * (1.0 - np.where(y > -100, np.exp(-y), 0.0)) ** 2,
+    "mulsigmoid": lambda x, y: x / (1.0 + np.exp(-np.clip(y, -100, 100))),
+    "mulsinpi": lambda x, y: x * np.sin(np.pi * y),
+    "mullj": lambda x, y: x * (y ** 12 - y ** 6),
+    "divexpm1": lambda x, y: np.where(np.abs(np.where(y < 100, np.expm1(y), np.exp(np.float64(100)))) > 1e-10,
+                                       x / np.where(y < 100, np.expm1(y), np.exp(np.float64(100))), 0.0),
+}
+
+TERNARY_OPS: dict[str, callable] = {
+    "mul3": lambda x, y, z: x * y * z,
+    "muldiv": lambda x, y, z: np.where(np.abs(z) > 1e-10, x * y / z, 0.0),
+    "divmul": lambda x, y, z: np.where(np.abs(y * z) > 1e-10, x / (y * z), 0.0),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -101,6 +115,7 @@ UNARY_OPS: dict[str, callable] = {
     "morse": lambda x: (1.0 - np.where(x > -100, np.exp(-x), 0.0)) ** 2,
     "sinpi": lambda x: np.sin(np.pi * x),
     "sin2": lambda x: np.sin(2.0 * x),
+    "gaussian": lambda x: np.exp(-0.5 * x**2),
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -141,6 +156,8 @@ class Node:
             return f"{self.value}({self.children[0]})"
         if self.kind == "binary":
             return f"({self.children[0]} {self.value} {self.children[1]})"
+        if self.kind == "ternary":
+            return f"{self.value}({self.children[0]}, {self.children[1]}, {self.children[2]})"
         return "?"
 
 
@@ -163,11 +180,18 @@ def random_tree(rng: np.random.Generator, variables: list[str],
         else:
             return Node("var", rng.choice(variables))
 
-    # Internal node: unary or binary
-    if UNARY_OPS and rng.random() < 0.3:
+    # Internal node: unary, binary, or ternary
+    r = rng.random()
+    if UNARY_OPS and r < 0.3:
         op = rng.choice(list(UNARY_OPS.keys()))
         child = random_tree(rng, variables, max_depth - 1, method)
         return Node("unary", op, [child])
+    elif TERNARY_OPS and r < 0.35:
+        op = rng.choice(list(TERNARY_OPS.keys()))
+        a = random_tree(rng, variables, max_depth - 1, method)
+        b = random_tree(rng, variables, max_depth - 1, method)
+        c = random_tree(rng, variables, max_depth - 1, method)
+        return Node("ternary", op, [a, b, c])
     else:
         op = rng.choice(list(BINARY_OPS.keys()))
         left = random_tree(rng, variables, max_depth - 1, method)
@@ -186,6 +210,9 @@ def _make_bin(op: str, left: Node, right: Node) -> Node:
 
 def _make_un(op: str, child: Node) -> Node:
     return Node("unary", op, [child])
+
+def _make_ter(op: str, a: Node, b: Node, c: Node) -> Node:
+    return Node("ternary", op, [a, b, c])
 
 
 def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[Node]:
@@ -214,18 +241,18 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     templates.append(_make_bin("sqrtdiv",
         _make_bin("mul", rc(), rv()), rv()))
 
-    # Template 5: v1 * lorentz(v2/v3) — relativistic gamma factor (compact)
+    # Template 5: mullorentz(v1, v2/v3) — relativistic gamma factor (compact)
     if n >= 2:
         templates.append(
-            _make_bin("mul", rv(),
-                _make_un("lorentz", _make_bin("div", rv(), rv()))))
+            _make_bin("mullorentz", rv(),
+                _make_bin("div", rv(), rv())))
 
-    # Template 6: v1 * v2 * lorentz(v2/v3) — relativistic momentum (compact)
+    # Template 6: mullorentz(v1*v2, v2/v3) — relativistic momentum (compact)
     if n >= 2:
         templates.append(
-            _make_bin("mul",
+            _make_bin("mullorentz",
                 _make_bin("mul", rv(), rv()),
-                _make_un("lorentz", _make_bin("div", rv(), rv()))))
+                _make_bin("div", rv(), rv())))
 
     # Template 7: exp(c * v1) — exponential growth/decay
     templates.append(_make_un("exp", _make_bin("mul", rc(), rv())))
@@ -251,9 +278,8 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
         templates.append(_make_bin("mul", rv(),
             _make_un("cos", _make_bin("mul", rv(), rv()))))
 
-    # Template 12: 1 / expm1(v1) — Planck/Bose-Einstein (compact)
-    templates.append(_make_bin("div", _make_const(1.0),
-        _make_un("expm1", rv())))
+    # Template 12: divexpm1(1, v1) — Planck/Bose-Einstein (compact)
+    templates.append(_make_bin("divexpm1", _make_const(1.0), rv()))
 
     # Template 13: sqover(v1, v3) * sin(c * v2) — projectile range pattern (compact)
     if n >= 2:
@@ -266,8 +292,8 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
         _make_bin("sub", _make_const(1.0),
             _make_un("exp", _make_bin("mul", rc(), rv())))))
 
-    # Template 15: sigmoid(c * v1) — logistic/sigmoid (compact)
-    templates.append(_make_un("sigmoid", _make_bin("mul", rc(), rv())))
+    # Template 15: mulsigmoid(v1, c*v2) — logistic/sigmoid (compact)
+    templates.append(_make_bin("mulsigmoid", rv(), _make_bin("mul", rc(), rv())))
 
     # Template 16: negexp(sqover(v1, v2)) — Gaussian-like (compact)
     templates.append(_make_un("negexp",
@@ -303,21 +329,17 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_bin("mul", rv(), _make_un("sin", rv())),
                 rv())))
 
-    # Template 22: v1 * (1 - negexp(v2 * (v3 - v4)))^2 — Morse potential (compact)
+    # Template 22: mulmorse(v1, v2*(v3-v4)) — Morse potential (compact)
     if n >= 3:
-        templates.append(_make_bin("mul", rv(),
-            _make_un("square",
-                _make_bin("sub", _make_const(1.0),
-                    _make_un("negexp",
-                        _make_bin("mul", rv(),
-                            _make_bin("sub", rv(), rv())))))))
+        templates.append(_make_bin("mulmorse", rv(),
+            _make_bin("mul", rv(),
+                _make_bin("sub", rv(), rv()))))
 
-    # Template 23: v1 * sigmoid(v2 * (v3 - v4)) — logistic growth (compact)
+    # Template 23: mulsigmoid(v1, v2*(v3-v4)) — logistic growth (compact)
     if n >= 3:
-        templates.append(_make_bin("mul", rv(),
-            _make_un("sigmoid",
-                _make_bin("mul", rv(),
-                    _make_bin("sub", rv(), rv())))))
+        templates.append(_make_bin("mulsigmoid", rv(),
+            _make_bin("mul", rv(),
+                _make_bin("sub", rv(), rv()))))
 
     # Template 24: mulnegexp(v1, v2 / (v3 * v4)) — RC circuit / Boltzmann (compact)
     if n >= 3:
@@ -331,13 +353,12 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
             _make_bin("div", rv(),
                 _make_bin("mul", rv(), rv()))))
 
-    # Template 26: v1 * sinpi(v2 * v3 / v4) — standing wave (compact)
+    # Template 26: mulsinpi(v1, v2*v3/v4) — standing wave (compact)
     if n >= 3:
-        templates.append(_make_bin("mul", rv(),
-            _make_un("sinpi",
-                _make_bin("div",
-                    _make_bin("mul", rv(), rv()),
-                    rv()))))
+        templates.append(_make_bin("mulsinpi", rv(),
+            _make_bin("div",
+                _make_bin("mul", rv(), rv()),
+                rv())))
 
     # Template 27: v1 * negexp(v2*v3) * cos(v4*v3) — damped oscillation (compact)
     if n >= 3:
@@ -352,12 +373,11 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
             _make_bin("sqover", rv(),
                 _make_bin("mul", rc(), _make_un("square", rv())))))
 
-    # Template 29: v1*morse(v2*(v3-v4)) — Morse potential (compact)
+    # Template 29: mulmorse(v1, v2*(v3-v4)) — Morse potential (compact)
     if n >= 3:
-        templates.append(_make_bin("mul", rv(),
-            _make_un("morse",
-                _make_bin("mul", rv(),
-                    _make_bin("sub", rv(), rv())))))
+        templates.append(_make_bin("mulmorse", rv(),
+            _make_bin("mul", rv(),
+                _make_bin("sub", rv(), rv()))))
 
     # Template 30a: v1*damposc(v2*v3, v4*v3) — damped oscillation (compact)
     if n >= 3:
@@ -371,20 +391,20 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
         templates.append(_make_bin("mul", rv(),
             _make_bin("sumshift", _make_bin("mul", rv(), rv()), rv())))
 
-    # Template 30: v1*lj(v2/v3) — Lennard-Jones (compact)
+    # Template 30: mullj(v1, v2/v3) — Lennard-Jones (compact)
     if n >= 2:
-        templates.append(_make_bin("mul", rv(),
-            _make_un("lj", _make_bin("div", rv(), rv()))))
+        templates.append(_make_bin("mullj", rv(),
+            _make_bin("div", rv(), rv())))
 
-    # Template 31: v1 / expm1(v1/v2) — Planck with variable numerator (compact)
+    # Template 31: divexpm1(v1, v1/v2) — Planck with variable numerator (compact)
     if n >= 2:
-        templates.append(_make_bin("div", rv(),
-            _make_un("expm1", _make_bin("div", rv(), rv()))))
+        templates.append(_make_bin("divexpm1", rv(),
+            _make_bin("div", rv(), rv())))
 
-    # Template 32: v1 / expm1(v2/v3) — general Planck (compact)
+    # Template 32: divexpm1(v1, v2/v3) — general Planck (compact)
     if n >= 2:
-        templates.append(_make_bin("div", rv(),
-            _make_un("expm1", _make_bin("div", rv(), rv()))))
+        templates.append(_make_bin("divexpm1", rv(),
+            _make_bin("div", rv(), rv())))
 
     return templates
 
@@ -416,14 +436,14 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
     if n == 2:
         for perm in itertools.permutations(V):
             a, b = perm
-            # eq23 Relativistic Mass: a*lorentz(b)  [m/sqrt(1-v²)] — compact (4 nodes vs 7)
+            # eq23 Relativistic Mass: mullorentz(a, b) [m/sqrt(1-v²)] — compact (3 nodes vs 7)
             templates.append(
-                _make_bin("mul", _v(a), _make_un("lorentz", _v(b))))
+                _make_bin("mullorentz", _v(a), _v(b)))
 
-            # eq50 Blackbody Peak (Wien): a/expm1(a/b) — compact (6 nodes vs 8)
+            # eq50 Blackbody Peak (Wien): divexpm1(a, a/b) — compact (5 nodes vs 8)
             templates.append(
-                _make_bin("div", _v(a),
-                    _make_un("expm1", _make_bin("div", _v(a), _v(b)))))
+                _make_bin("divexpm1", _v(a),
+                    _make_bin("div", _v(a), _v(b))))
 
             # eq24 Pendulum Period: sqrtdiv(a, b)  [2π*sqrt(l/g)] — compact (3 nodes vs 4)
             templates.append(
@@ -434,12 +454,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_un("inv",
                     _make_bin("add", _make_un("inv", _v(a)), _make_un("inv", _v(b)))))
 
-            # eq34 Gaussian: sqrt(negexp(square(a/b))) — compact form (6 nodes vs 8)
+            # eq34 Gaussian: gaussian(a/b) = exp(-½(a/b)²) — compact (4 nodes vs 8)
             templates.append(
-                _make_un("sqrt",
-                    _make_un("negexp",
-                        _make_un("square",
-                            _make_bin("div", _v(a), _v(b))))))
+                _make_un("gaussian",
+                    _make_bin("div", _v(a), _v(b))))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq01 KE ½mv², eq08 ½kx²: mulsq(a, b) = a*b² — compact (3 nodes vs 4)
@@ -470,11 +488,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
     if n == 3:
         for perm in itertools.permutations(V):
             a, b, c = perm
-            # eq26 Relativistic Momentum: a*b*lorentz(b/c) — compact (7 nodes vs 11)
+            # eq26 Relativistic Momentum: mullorentz(a*b, b/c) — compact (6 nodes vs 11)
             templates.append(
-                _make_bin("mul",
+                _make_bin("mullorentz",
                     _make_bin("mul", _v(a), _v(b)),
-                    _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
+                    _make_bin("div", _v(b), _v(c))))
 
             # eq36 Snell: arcsin(a*sin(b)/c)
             templates.append(
@@ -488,16 +506,16 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("mul", _v(b),
                     _make_bin("cosrule", _make_bin("div", _v(a), _v(b)), _v(c))))
 
-            # eq30 Relativistic Energy: mulsq(a, c)*lorentz(b/c) — compact (7 nodes vs 11)
+            # eq30 Relativistic Energy: mullorentz(mulsq(a, c), b/c) — compact (6 nodes vs 11)
             templates.append(
-                _make_bin("mul",
+                _make_bin("mullorentz",
                     _make_bin("mulsq", _v(a), _v(c)),
-                    _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
+                    _make_bin("div", _v(b), _v(c))))
 
-            # eq31 Time Dilation: a*lorentz(b/c) — compact (6 nodes vs 9)
+            # eq31 Time Dilation: mullorentz(a, b/c) — compact (5 nodes vs 9)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("lorentz", _make_bin("div", _v(b), _v(c)))))
+                _make_bin("mullorentz", _v(a),
+                    _make_bin("div", _v(b), _v(c))))
 
             # eq38 Projectile Range: sqover(a, c)*sin2(b)  [v²*sin(2θ)/g] — compact (6 nodes vs 9)
             templates.append(
@@ -521,10 +539,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_bin("div", _v(a),
                         _make_bin("mul", _v(b), _v(c)))))
 
-            # eq46 Lennard-Jones: a*lj(b/c) where lj(x)=x^12-x^6 — compact (5 nodes vs 12)
+            # eq46 Lennard-Jones: mullj(a, b/c) where lj(x)=x^12-x^6 — compact (4 nodes vs 12)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("lj", _make_bin("div", _v(b), _v(c)))))
+                _make_bin("mullj", _v(a),
+                    _make_bin("div", _v(b), _v(c))))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq03 mgh, eq04 nT/V: a*b*c (3-variable product)
@@ -584,21 +602,17 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("mul", _v(a),
                     _make_bin("sumshift", _make_bin("mul", _v(c), _v(d)), _v(b))))
 
-            # eq47 Logistic: a*sigmoid(b*(c-d)) — compact (8 nodes vs 11)
+            # eq47 Logistic: mulsigmoid(a, b*(c-d)) — compact (7 nodes vs 11)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("sigmoid",
-                        _make_bin("mul", _v(b),
-                            _make_bin("sub", _v(c), _v(d))))))
+                _make_bin("mulsigmoid", _v(a),
+                    _make_bin("mul", _v(b),
+                        _make_bin("sub", _v(c), _v(d)))))
 
-            # eq48 Morse: a*(1-negexp(b*(c-d)))^2 — compact (11 nodes vs 12)
+            # eq48 Morse: mulmorse(a, b*(c-d)) — compact (7 nodes vs 12)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("square",
-                        _make_bin("sub", _c(1.0),
-                            _make_un("negexp",
-                                _make_bin("mul", _v(b),
-                                    _make_bin("sub", _v(c), _v(d))))))))
+                _make_bin("mulmorse", _v(a),
+                    _make_bin("mul", _v(b),
+                        _make_bin("sub", _v(c), _v(d)))))
 
             # eq49 Pendulum: mulcos(a, sqrtdiv(b,c)*d) — compact (7 nodes vs 9)
             templates.append(
@@ -613,12 +627,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_bin("div", _v(b),
                         _make_bin("mul", _v(c), _v(d)))))
 
-            # eq48 Morse: a*morse(b*(c-d)) where morse(x)=(1-exp(-x))^2 — compact (8 nodes vs 11)
+            # eq48 Morse: mulmorse(a, b*(c-d)) where morse(x)=(1-exp(-x))^2 — compact (7 nodes vs 11)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("morse",
-                        _make_bin("mul", _v(b),
-                            _make_bin("sub", _v(c), _v(d))))))
+                _make_bin("mulmorse", _v(a),
+                    _make_bin("mul", _v(b),
+                        _make_bin("sub", _v(c), _v(d)))))
 
             # eq35 Damped Oscillation: a*damposc(b*d, c*d) where damposc(x,y)=exp(-x)*cos(y) — compact (9 nodes vs 11)
             templates.append(
@@ -627,13 +640,12 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul", _v(b), _v(d)),
                         _make_bin("mul", _v(c), _v(d)))))
 
-            # eq45 Standing Wave: a*sinpi(b*c/d) where sinpi(x)=sin(πx) — compact (8 nodes vs 10)
+            # eq45 Standing Wave: mulsinpi(a, b*c/d) where sinpi(x)=sin(πx) — compact (7 nodes vs 10)
             templates.append(
-                _make_bin("mul", _v(a),
-                    _make_un("sinpi",
-                        _make_bin("div",
-                            _make_bin("mul", _v(b), _v(c)),
-                            _v(d)))))
+                _make_bin("mulsinpi", _v(a),
+                    _make_bin("div",
+                        _make_bin("mul", _v(b), _v(c)),
+                        _v(d))))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq42 Magnetic Force: mulsin(a*b*c, d) = a*b*c*sin(d) — compact (7 nodes vs 8)
@@ -709,6 +721,12 @@ def evaluate_tree(node: Node, X: np.ndarray, var_names: list[str]) -> np.ndarray
         right_val = evaluate_tree(node.children[1], X, var_names)
         op_fn = BINARY_OPS[node.value]
         return op_fn(left_val, right_val)
+    if node.kind == "ternary":
+        a_val = evaluate_tree(node.children[0], X, var_names)
+        b_val = evaluate_tree(node.children[1], X, var_names)
+        c_val = evaluate_tree(node.children[2], X, var_names)
+        op_fn = TERNARY_OPS[node.value]
+        return op_fn(a_val, b_val, c_val)
     return np.zeros(X.shape[0])
 
 
@@ -802,7 +820,12 @@ def point_mutate(rng: np.random.Generator, tree: Node, variables: list[str]) -> 
     nodes = _collect_nodes(mutant)
     target = rng.choice(nodes)
 
-    if target.kind == "binary":
+    if target.kind == "ternary":
+        # Swap to a different ternary operator
+        ops = [op for op in TERNARY_OPS.keys() if op != target.value]
+        if ops:
+            target.value = rng.choice(ops)
+    elif target.kind == "binary":
         # Swap to a different binary operator
         ops = [op for op in BINARY_OPS.keys() if op != target.value]
         if ops:
@@ -1184,6 +1207,79 @@ def simplify(node: Node) -> Node:
         return Node("binary", "mulnegexp",
                      [node.children[1], node.children[0].children[0]])
 
+    # mul(X, lorentz(Y)) → mullorentz(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "lorentz"):
+        return Node("binary", "mullorentz",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(lorentz(Y), X) → mullorentz(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "lorentz"):
+        return Node("binary", "mullorentz",
+                     [node.children[1], node.children[0].children[0]])
+
+    # mul(X, morse(Y)) → mulmorse(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "morse"):
+        return Node("binary", "mulmorse",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(morse(Y), X) → mulmorse(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "morse"):
+        return Node("binary", "mulmorse",
+                     [node.children[1], node.children[0].children[0]])
+
+    # mul(X, sigmoid(Y)) → mulsigmoid(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "sigmoid"):
+        return Node("binary", "mulsigmoid",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(sigmoid(Y), X) → mulsigmoid(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "sigmoid"):
+        return Node("binary", "mulsigmoid",
+                     [node.children[1], node.children[0].children[0]])
+
+    # mul(X, sinpi(Y)) → mulsinpi(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "sinpi"):
+        return Node("binary", "mulsinpi",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(sinpi(Y), X) → mulsinpi(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "sinpi"):
+        return Node("binary", "mulsinpi",
+                     [node.children[1], node.children[0].children[0]])
+
+    # mul(X, lj(Y)) → mullj(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "unary" and node.children[1].value == "lj"):
+        return Node("binary", "mullj",
+                     [node.children[0], node.children[1].children[0]])
+
+    # mul(lj(Y), X) → mullj(X, Y): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "unary" and node.children[0].value == "lj"):
+        return Node("binary", "mullj",
+                     [node.children[1], node.children[0].children[0]])
+
+    # div(X, expm1(Y)) → divexpm1(X, Y): saves 1 node
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[1].kind == "unary" and node.children[1].value == "expm1"):
+        return Node("binary", "divexpm1",
+                     [node.children[0], node.children[1].children[0]])
+
+    # sqrt(negexp(square(X))) → gaussian(X): saves 2 nodes
+    if (node.kind == "unary" and node.value == "sqrt"
+            and node.children[0].kind == "unary" and node.children[0].value == "negexp"
+            and node.children[0].children[0].kind == "unary"
+            and node.children[0].children[0].value == "square"):
+        return Node("unary", "gaussian", [node.children[0].children[0].children[0]])
+
     # add(sin(x), sin(add(x, y))) → sumshift(x, y): saves 6 nodes (wave superposition)
     if (node.kind == "binary" and node.value == "add"
             and node.children[0].kind == "unary" and node.children[0].value == "sin"
@@ -1194,6 +1290,30 @@ def simplify(node: Node) -> Node:
         return Node("binary", "sumshift",
                      [node.children[0].children[0],
                       node.children[1].children[0].children[1]])
+
+    # mul(X, mul(Y, Z)) → mul3(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[1].kind == "binary" and node.children[1].value == "mul"):
+        return Node("ternary", "mul3",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
+
+    # mul(mul(X, Y), Z) → mul3(X, Y, Z): saves 1 node (commuted)
+    if (node.kind == "binary" and node.value == "mul"
+            and node.children[0].kind == "binary" and node.children[0].value == "mul"):
+        return Node("ternary", "mul3",
+                     [node.children[0].children[0], node.children[0].children[1], node.children[1]])
+
+    # div(mul(X, Y), Z) → muldiv(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[0].kind == "binary" and node.children[0].value == "mul"):
+        return Node("ternary", "muldiv",
+                     [node.children[0].children[0], node.children[0].children[1], node.children[1]])
+
+    # div(X, mul(Y, Z)) → divmul(X, Y, Z): saves 1 node
+    if (node.kind == "binary" and node.value == "div"
+            and node.children[1].kind == "binary" and node.children[1].value == "mul"):
+        return Node("ternary", "divmul",
+                     [node.children[0], node.children[1].children[0], node.children[1].children[1]])
 
     # Constant folding: binary op on two constants
     if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
@@ -1212,6 +1332,18 @@ def simplify(node: Node) -> Node:
             val = node.children[0].value
             op_fn = UNARY_OPS[node.value]
             result = float(op_fn(np.array([val]))[0])
+            if np.isfinite(result):
+                return Node("const", result)
+        except Exception:
+            pass
+
+    # Constant folding: ternary op on three constants
+    if (node.kind == "ternary" and node.children[0].kind == "const"
+            and node.children[1].kind == "const" and node.children[2].kind == "const"):
+        try:
+            a, b, c = node.children[0].value, node.children[1].value, node.children[2].value
+            op_fn = TERNARY_OPS[node.value]
+            result = float(op_fn(np.array([a]), np.array([b]), np.array([c]))[0])
             if np.isfinite(result):
                 return Node("const", result)
         except Exception:

@@ -1,0 +1,75 @@
+{
+  "version": "substrate.nanopub/v0",
+  "id": "np_20260403_163854_sqrtdiv",
+  "assertion": {
+    "title": "sqrtdiv(a,b)=sqrt(a/b) compound operator reduces total nodes 288→283",
+    "kind": "result",
+    "statement": "Adding a binary compound operator sqrtdiv(a,b)=sqrt(a/b) saves 5 nodes across 5 equations by absorbing the unary sqrt wrapping a div into a single binary operator, reducing total nodes from 288 to 283 while maintaining 50/50 exact matches.",
+    "claim": "supported",
+    "details": {
+      "hypothesis": "Binary compound operator sqrtdiv(a,b)=sqrt(a/b) can replace sqrt(div(a,b)) patterns, each saving 1 node by absorbing the unary sqrt into the binary operator.",
+      "changes": [
+        "Added sqrtdiv binary operator: sqrtdiv(a,b) = sqrt(a/b) with safe division",
+        "Added simplification rule: sqrt(div(X, Y)) → sqrtdiv(X, Y)",
+        "Updated permutation templates: n=2 (sqrtdiv for pendulum period), n=3 (sqrtdiv for escape/orbital/rms velocity), n=4 (sqrtdiv for pendulum angle)",
+        "Updated random-variable physics templates for consistency"
+      ],
+      "results": {
+        "before": {
+          "total_nodes": 288,
+          "exact_matches": "50/50"
+        },
+        "after": {
+          "total_nodes": 283,
+          "exact_matches": "50/50"
+        },
+        "per_equation_savings": {
+          "eq24_pendulum_period": "4→3 (sqrt(l/g) → l sqrtdiv g)",
+          "eq25_escape_velocity": "6→5 (sqrt(G*M/r) → (G*M) sqrtdiv r)",
+          "eq27_rms_speed": "6→5 (sqrt(k_B*T/m) → (k_B*T) sqrtdiv m)",
+          "eq28_orbital_velocity": "6→5 (sqrt(G*M/r) → (G*M) sqrtdiv r)",
+          "eq49_pendulum_angle": "9→8 (θ₀*cos(sqrt(g/l)*t) → θ₀*cos((g sqrtdiv l)*t))"
+        },
+        "runtime": "0.3s (unchanged)",
+        "consistency": "3 consecutive 50/50 runs confirmed"
+      },
+      "key_insight": "The sqrt(a/b) pattern appears frequently in physics for quantities involving ratios under square roots: pendulum period sqrt(l/g), escape velocity sqrt(2GM/r), RMS speed sqrt(k_BT/m). Each wraps sqrt() around div(), costing 1 extra node. A dedicated binary operator absorbs both operations, saving 1 node per occurrence."
+    }
+  },
+  "provenance": {
+    "authors": [
+      {
+        "type": "agent",
+        "id": "ea65df51-5a17-42b4-a7df-25a5102267ff",
+        "name": "copernicus"
+      }
+    ],
+    "evidence": {
+      "repo": "stw2/feynman-sr",
+      "branch": "substrate/agent/n2-permutation-templates",
+      "commit": "b4f9fa8",
+      "artifacts": [
+        "run.log"
+      ],
+      "metrics": {
+        "r2_test": 1.0,
+        "exact_match": true,
+        "equations_tested": ["eq24", "eq25", "eq27", "eq28", "eq49"],
+        "baseline_nodes": 288,
+        "improved_nodes": 283
+      }
+    }
+  },
+  "publicationInfo": {
+    "createdAt": "2026-04-03T16:38:53.541+00:00"
+  },
+  "substrate": {
+    "room": "c079cfc6-fdb3-4ea4-9917-bac3c90145a7",
+    "links": {
+      "supports": [
+        "np_20260403_163000_mulsq_sqover_divsq"
+      ],
+      "attacks": []
+    }
+  }
+}
