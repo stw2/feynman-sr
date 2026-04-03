@@ -74,6 +74,7 @@ BINARY_OPS: dict[str, callable] = {
     "mulsq": lambda x, y: x * y**2,
     "sqover": lambda x, y: x**2 / np.where(np.abs(y) > 1e-10, y, 1e-10),
     "divsq": lambda x, y: np.where(np.abs(y) > 1e-10, x / y**2, 0.0),
+    "sqrtdiv": lambda x, y: np.sqrt(np.abs(np.where(np.abs(y) > 1e-10, x / y, 0.0))),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -205,9 +206,9 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
     # Template 3: v1 * v2 / v3
     templates.append(_make_bin("div", _make_bin("mul", rv(), rv()), rv()))
 
-    # Template 4: sqrt(v1 / v2) — e.g. escape velocity, rms speed
-    templates.append(_make_un("sqrt", _make_bin("div",
-        _make_bin("mul", rc(), rv()), rv())))
+    # Template 4: sqrtdiv(v1, v2) — e.g. escape velocity, rms speed (compact)
+    templates.append(_make_bin("sqrtdiv",
+        _make_bin("mul", rc(), rv()), rv()))
 
     # Template 5: v1 * lorentz(v2/v3) — relativistic gamma factor (compact)
     if n >= 2:
@@ -280,12 +281,12 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
         templates.append(_make_bin("mul", rv(),
             _make_bin("cosrule", _make_bin("div", rv(), rv()), rv())))
 
-    # Template 19: v1 * cos(sqrt(v2/v3) * v4) — pendulum pattern
+    # Template 19: v1 * cos(sqrtdiv(v2,v3) * v4) — pendulum pattern (compact)
     if n >= 3:
         templates.append(_make_bin("mul", rv(),
             _make_un("cos",
                 _make_bin("mul",
-                    _make_un("sqrt", _make_bin("div", rv(), rv())),
+                    _make_bin("sqrtdiv", rv(), rv()),
                     rv()))))
 
     # Template 20: c / v1 — Wien's law pattern
@@ -421,9 +422,9 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                 _make_bin("div", _v(a),
                     _make_un("expm1", _make_bin("div", _v(a), _v(b)))))
 
-            # eq24 Pendulum Period: sqrt(a/b)  [2π*sqrt(l/g)]
+            # eq24 Pendulum Period: sqrtdiv(a, b)  [2π*sqrt(l/g)] — compact (3 nodes vs 4)
             templates.append(
-                _make_un("sqrt", _make_bin("div", _v(a), _v(b))))
+                _make_bin("sqrtdiv", _v(a), _v(b)))
 
             # eq21 Reduced Mass: a*b/(a+b) = inv(inv(a)+inv(b)) — compact (6 nodes vs 7)
             templates.append(
@@ -552,12 +553,11 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_bin("mul", _v(c), _v(b)))))
 
             # eq29 Schwarzschild 2GM/c²: a*b/square(c) already covered above
-            # eq25, eq27, eq28: sqrt(a*b/c) — escape/orbital/rms velocity
+            # eq25, eq27, eq28: sqrtdiv(a*b, c) — escape/orbital/rms velocity — compact (5 nodes vs 6)
             templates.append(
-                _make_un("sqrt",
-                    _make_bin("div",
-                        _make_bin("mul", _v(a), _v(b)),
-                        _v(c))))
+                _make_bin("sqrtdiv",
+                    _make_bin("mul", _v(a), _v(b)),
+                    _v(c)))
 
     if n == 4:
         for perm in itertools.permutations(V):
@@ -597,12 +597,12 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                                 _make_bin("mul", _v(b),
                                     _make_bin("sub", _v(c), _v(d))))))))
 
-            # eq49 Pendulum: a*cos(sqrt(b/c)*d)
+            # eq49 Pendulum: a*cos(sqrtdiv(b,c)*d) — compact (8 nodes vs 9)
             templates.append(
                 _make_bin("mul", _v(a),
                     _make_un("cos",
                         _make_bin("mul",
-                            _make_un("sqrt", _make_bin("div", _v(b), _v(c))),
+                            _make_bin("sqrtdiv", _v(b), _v(c)),
                             _v(d)))))
 
             # eq43 RC Circuit: a*negexp(b/(c*d)) — compact (8 nodes vs 9)
@@ -1130,6 +1130,12 @@ def simplify(node: Node) -> Node:
             and node.children[1].kind == "unary" and node.children[1].value == "square"):
         return Node("binary", "divsq",
                      [node.children[0], node.children[1].children[0]])
+
+    # sqrt(div(X, Y)) → sqrtdiv(X, Y): saves 1 node
+    if (node.kind == "unary" and node.value == "sqrt"
+            and node.children[0].kind == "binary" and node.children[0].value == "div"):
+        return Node("binary", "sqrtdiv",
+                     [node.children[0].children[0], node.children[0].children[1]])
 
     # add(sin(x), sin(add(x, y))) → sumshift(x, y): saves 6 nodes (wave superposition)
     if (node.kind == "binary" and node.value == "add"
