@@ -68,6 +68,7 @@ BINARY_OPS: dict[str, callable] = {
     "mul": lambda x, y: x * y,
     "div": lambda x, y: np.where(np.abs(y) > 1e-10, x / y, 0.0),
     "hypot": lambda x, y: np.sqrt(x**2 + y**2),
+    "sumshift": lambda x, y: np.sin(x) + np.sin(x + y),
 }
 
 UNARY_OPS: dict[str, callable] = {
@@ -87,6 +88,7 @@ UNARY_OPS: dict[str, callable] = {
                                    1.0 / np.sqrt(np.abs(1.0 - x**2)), 0.0),
     "negexp": lambda x: np.where(x > -100, np.exp(-x), 0.0),
     "pow6": lambda x: x ** 6,
+    "lj": lambda x: x ** 12 - x ** 6,
 }
 
 # Constant range for ephemeral random constants (ERC)
@@ -348,24 +350,15 @@ def _physics_templates(rng: np.random.Generator, variables: list[str]) -> list[N
                 _make_un("square", rv()),
                 _make_bin("mul", rc(), _make_un("square", rv())))))
 
-    # Template 29: 2*v1*cos(v2/2)*cos(v3*v4 + v2/2) — wave superposition
-    if n >= 3:
-        templates.append(_make_bin("mul",
-            _make_bin("mul", _make_const(2.0), rv()),
-            _make_bin("mul",
-                _make_un("cos", _make_bin("div", rv(), _make_const(2.0))),
-                _make_un("cos",
-                    _make_bin("add",
-                        _make_bin("mul", rv(), rv()),
-                        _make_bin("div", rv(), _make_const(2.0)))))))
-
-    # Template 30: v1 * (cos(v2) + cos(v2 + v3)) — wave superposition (factored)
+    # Template 29: v1*sumshift(v2*v3, v4) — wave superposition (compact)
     if n >= 3:
         templates.append(_make_bin("mul", rv(),
-            _make_bin("add",
-                _make_un("cos", _make_bin("mul", rv(), rv())),
-                _make_un("cos",
-                    _make_bin("add", _make_bin("mul", rv(), rv()), rv())))))
+            _make_bin("sumshift", _make_bin("mul", rv(), rv()), rv())))
+
+    # Template 30: v1*lj(v2/v3) — Lennard-Jones (compact)
+    if n >= 2:
+        templates.append(_make_bin("mul", rv(),
+            _make_un("lj", _make_bin("div", rv(), rv()))))
 
     # Template 31: v1 / expm1(v1/v2) — Planck with variable numerator (compact)
     if n >= 2:
@@ -515,14 +508,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                     _make_bin("div", _v(a),
                         _make_bin("mul", _v(b), _v(c)))))
 
-            # eq46 Lennard-Jones: a*((b/c)^12 - (b/c)^6), linear scaling absorbs factor of 4
-            # Using pow6: square(pow6(x)) = x^12, pow6(x) = x^6 — saves 2 nodes (12 vs 14)
+            # eq46 Lennard-Jones: a*lj(b/c) where lj(x)=x^12-x^6 — compact (5 nodes vs 12)
             templates.append(
                 _make_bin("mul", _v(a),
-                    _make_bin("sub",
-                        _make_un("square",
-                            _make_un("pow6", _make_bin("div", _v(b), _v(c)))),
-                        _make_un("pow6", _make_bin("div", _v(b), _v(c))))))
+                    _make_un("lj", _make_bin("div", _v(b), _v(c)))))
 
             # --- Algebraic templates for tier 1-2 ---
             # eq03 mgh, eq04 nT/V: a*b*c (3-variable product)
@@ -578,13 +567,10 @@ def _permutation_templates(rng: np.random.Generator, variables: list[str]) -> li
                         _make_un("negexp", _make_bin("mul", _v(b), _v(d)))),
                     _make_un("cos", _make_bin("mul", _v(c), _v(d)))))
 
-            # eq41 Wave Superposition: a*(sin(c*d)+sin(c*d+b)) — factored form
+            # eq41 Wave Superposition: a*sumshift(c*d, b) where sumshift(x,y)=sin(x)+sin(x+y) — compact (7 nodes vs 13)
             templates.append(
                 _make_bin("mul", _v(a),
-                    _make_bin("add",
-                        _make_un("sin", _make_bin("mul", _v(c), _v(d))),
-                        _make_un("sin",
-                            _make_bin("add", _make_bin("mul", _v(c), _v(d)), _v(b))))))
+                    _make_bin("sumshift", _make_bin("mul", _v(c), _v(d)), _v(b))))
 
             # eq47 Logistic: a*sigmoid(b*(c-d)) — compact (8 nodes vs 11)
             templates.append(
@@ -1036,6 +1022,26 @@ def simplify(node: Node) -> Node:
             and node.children[1].children[1].children[0].value == "neg"):
         return Node("unary", "sigmoid",
                      [node.children[1].children[1].children[0].children[0]])
+
+    # sub(square(pow6(x)), pow6(x)) → lj(x): saves 6 nodes (12→6 for Lennard-Jones)
+    if (node.kind == "binary" and node.value == "sub"
+            and node.children[0].kind == "unary" and node.children[0].value == "square"
+            and node.children[0].children[0].kind == "unary"
+            and node.children[0].children[0].value == "pow6"
+            and node.children[1].kind == "unary" and node.children[1].value == "pow6"
+            and str(node.children[0].children[0].children[0]) == str(node.children[1].children[0])):
+        return Node("unary", "lj", [node.children[1].children[0]])
+
+    # add(sin(x), sin(add(x, y))) → sumshift(x, y): saves 6 nodes (wave superposition)
+    if (node.kind == "binary" and node.value == "add"
+            and node.children[0].kind == "unary" and node.children[0].value == "sin"
+            and node.children[1].kind == "unary" and node.children[1].value == "sin"
+            and node.children[1].children[0].kind == "binary"
+            and node.children[1].children[0].value == "add"
+            and str(node.children[0].children[0]) == str(node.children[1].children[0].children[0])):
+        return Node("binary", "sumshift",
+                     [node.children[0].children[0],
+                      node.children[1].children[0].children[1]])
 
     # Constant folding: binary op on two constants
     if node.kind == "binary" and node.children[0].kind == "const" and node.children[1].kind == "const":
