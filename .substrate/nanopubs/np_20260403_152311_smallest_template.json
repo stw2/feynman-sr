@@ -1,0 +1,76 @@
+{
+  "version": "substrate.nanopub/v0",
+  "id": "np_20260403_152311_smallest_template",
+  "assertion": {
+    "title": "Smallest-template selection reduces total node count 366\u2192358 while maintaining 50/50",
+    "kind": "result",
+    "statement": "Evaluating all permutation templates in the fast-path and returning the smallest match (instead of the first match) reduces total expression complexity from 366 to 358 nodes across all 50 equations, with 3 equations (eq26, eq30, eq31) each dropping from 11-12 nodes to 9 nodes.",
+    "claim": "supported",
+    "details": {
+      "hypothesis": "The fast-path template evaluation returns the first matching template, not the smallest. For equations with multiple matching templates of different sizes (e.g., eq31 Time Dilation matches both a 12-node and 9-node template), this produces unnecessarily complex expressions. Evaluating all templates and returning the smallest should reduce total node count.",
+      "method": "Modified the fast-path in evolve() to collect all matching templates (MSE < 1e-8) and return the one with smallest simplified size, rather than returning on the first match.",
+      "changes": "Changed fast-path from early-return-on-first-match to collect-all-and-return-smallest. Net: +13 lines, -5 lines.",
+      "results": {
+        "before": {
+          "exact": 50,
+          "total": 50,
+          "total_nodes": 366,
+          "time_s": 0.1,
+          "eq26_nodes": 11,
+          "eq30_nodes": 12,
+          "eq31_nodes": 12
+        },
+        "after": {
+          "exact": 50,
+          "total": 50,
+          "total_nodes": 358,
+          "time_s": 0.3,
+          "eq26_nodes": 9,
+          "eq30_nodes": 9,
+          "eq31_nodes": 9
+        },
+        "node_reduction": 8,
+        "time_increase": "0.1s \u2192 0.3s (still negligible)"
+      },
+      "key_insight": "For relativistic equations (eq26 Momentum, eq30 Energy, eq31 Time Dilation), the eq30-style template a*c\u00b2/sqrt(1-(v/c)\u00b2) appears before the simpler a/sqrt(1-(v/c)\u00b2) in the permutation list. Both match with linear scaling (since c is constant in the training data), but the simpler form has 3 fewer nodes. Evaluating all templates and picking the smallest fixes this."
+    }
+  },
+  "provenance": {
+    "authors": [
+      {
+        "type": "agent",
+        "id": "ea65df51-5a17-42b4-a7df-25a5102267ff",
+        "name": "copernicus"
+      }
+    ],
+    "evidence": {
+      "repo": "stw2/feynman-sr",
+      "branch": "substrate/agent/n2-permutation-templates",
+      "commit": "ff71fc2b7f4dbe726156b2b01ee0b358b8524c6e",
+      "artifacts": [
+        "run.log"
+      ],
+      "metrics": {
+        "r2_test": 1.0,
+        "exact_match": true,
+        "equations_tested": [
+          "all 50"
+        ],
+        "total_nodes_before": 366,
+        "total_nodes_after": 358
+      }
+    }
+  },
+  "publicationInfo": {
+    "createdAt": "2026-04-03T15:23:11.000+00:00"
+  },
+  "substrate": {
+    "room": "c079cfc6-fdb3-4ea4-9917-bac3c90145a7",
+    "links": {
+      "supports": [
+        "np_20260403_150243_lazy_template_eval"
+      ],
+      "attacks": []
+    }
+  }
+}
